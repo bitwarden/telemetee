@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Telemetee.Attestation.Test" />
+    <InternalsVisibleTo Include="Telemetee.Collector.IntegrationTest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Telemetee.NoiseChannel\Telemetee.NoiseChannel.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+# Environment variable rules in the CCE policy that are not pinned to a literal value.
+#
+# Every entry here is an operator-controlled input to attested code. A value may be listed only if
+# changing it cannot alter what the collector does with user data: credentials for an untrusted
+# sink qualify, endpoints and behavioral settings do not. deploy/generate-policy.sh fails when the
+# generated policy contains a non-literal rule that is not listed here.
+#
+# Format: one regex pattern per line, exactly as it appears in the policy's env_rules.
+
+# Injected by the ACI runtime into every container; confcom adds these by default. The collector
+# reads none of them.
+(?i)(FABRIC)_.+=.+
+HOSTNAME=.+
+T(E)?MP=.+
+FabricPackageFileName=.+
+HostedServiceName=.+
+IDENTITY_API_VERSION=.+
+IDENTITY_HEADER=.+
+IDENTITY_SERVER_THUMBPRINT=.+
+azurecontainerinstance_restarted_by=.+

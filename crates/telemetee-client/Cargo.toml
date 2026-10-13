@@ -1,0 +1,23 @@
+[package]
+name = "telemetee-client"
+description = "Client for the Bitwarden anonymous telemetry collector: attestation verification and the Noise channel."
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+bitwarden-random = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+snow = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+x509-parser = { workspace = true }
+
+[lints]
+workspace = true

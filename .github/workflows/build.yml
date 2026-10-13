@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet restore telemetee.slnx --locked-mode
+      - run: dotnet format telemetee.slnx --verify-no-changes --no-restore
+      - run: dotnet build telemetee.slnx --no-restore
+      - run: dotnet test telemetee.slnx --no-build
+
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telemetee
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: telemetee
+      # The client crate links to sdk-internal by relative path until it moves there.
+      - uses: actions/checkout@v4
+        with:
+          repository: bitwarden/sdk-internal
+          path: sdk-internal
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  # Proves the image is reproducible from source on every push, not only at release time.
+  reproducible-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          name: telemetee
+      - id: first
+        run: echo "id=$(deploy/build-image.sh telemetee-collector:check-1)" >> "$GITHUB_OUTPUT"
+      - id: second
+        run: echo "id=$(deploy/build-image.sh telemetee-collector:check-2)" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "first:  ${{ steps.first.outputs.id }}"
+          echo "second: ${{ steps.second.outputs.id }}"
+          test "${{ steps.first.outputs.id }}" = "${{ steps.second.outputs.id }}"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [dotnet, rust, reproducible-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+      IMAGE: telemetee-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az acr login --name "${REGISTRY%%.*}"
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          name: telemetee
+      - id: push
+        run: |
+          digest=$(deploy/build-image.sh "$IMAGE:${GITHUB_REF_NAME#v}" --push "$REGISTRY")
+          echo "ref=$REGISTRY/$IMAGE@$digest" >> "$GITHUB_OUTPUT"
+      # The printed hash is the hostdata clients pin for this version. It must come from here, never
+      # from a local run. The policy, template, and wildcard allowlist are published alongside so an
+      # auditor can read what the hash commits to and reproduce it from the tagged source.
+      - run: deploy/generate-policy.sh "${{ steps.push.outputs.ref }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collector-${{ github.ref_name }}
+          path: |
+            deploy/aci-template.generated.json
+            deploy/policy.rego
+            deploy/hostdata.txt
+            deploy/allowed-wildcards.txt

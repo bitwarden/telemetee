@@ -1,0 +1,136 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "name": {
+      "type": "string",
+      "defaultValue": "telemetee-collector"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "collectorImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Collector image reference, by digest, as published by the release workflow."
+      }
+    },
+    "maaEndpoint": {
+      "type": "string",
+      "defaultValue": "sharedeus2.eus2.attest.azure.net",
+      "metadata": {
+        "description": "Microsoft shared attestation provider host. Clients pin this issuer."
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Private registry host for the collector image. Empty for anonymous pull."
+      }
+    },
+    "registryUsername": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "registryPassword": {
+      "type": "securestring",
+      "defaultValue": ""
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": "Confidential",
+        "osType": "Linux",
+        "restartPolicy": "Always",
+        "confidentialComputeProperties": {
+          "ccePolicy": ""
+        },
+        "imageRegistryCredentials": "[if(empty(parameters('registryServer')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword'))))]",
+        "ipAddress": {
+          "type": "Public",
+          "ports": [
+            {
+              "protocol": "TCP",
+              "port": 5000
+            }
+          ]
+        },
+        "containers": [
+          {
+            "name": "collector",
+            "properties": {
+              "image": "[parameters('collectorImage')]",
+              "ports": [
+                {
+                  "port": 5000
+                }
+              ],
+              "environmentVariables": [
+                {
+                  "name": "ASPNETCORE_ENVIRONMENT",
+                  "value": "Production"
+                },
+                {
+                  "name": "ASPNETCORE_HTTP_PORTS",
+                  "value": "5000"
+                },
+                {
+                  "name": "Attestation__SidecarUrl",
+                  "value": "http://localhost:8080"
+                },
+                {
+                  "name": "Attestation__MaaEndpoint",
+                  "value": "[parameters('maaEndpoint')]"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 1,
+                  "memoryInGB": 2
+                }
+              },
+              "livenessProbe": {
+                "httpGet": {
+                  "path": "/healthz",
+                  "port": 5000
+                },
+                "periodSeconds": 30
+              }
+            }
+          },
+          {
+            "name": "attestation-sidecar",
+            "properties": {
+              "image": "mcr.microsoft.com/aci/skr@sha256:deb7d4a4462b3df7c8e97e4d23c628ef967b2fb2a8b059afb9e2954e21f4bbe5",
+              "command": ["/skr.sh"],
+              "ports": [
+                {
+                  "port": 8080
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 0.5,
+                  "memoryInGB": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "ip": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('name'))).ipAddress.ip]"
+    }
+  }
+}

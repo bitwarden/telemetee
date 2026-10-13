@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Bitwarden Inc"]
+edition = "2024"
+rust-version = "1.88.0"
+license = "GPL-3.0-only OR LicenseRef-Bitwarden-SDK"
+
+[workspace.dependencies]
+# Local link to sdk-internal so this crate can move there unchanged. Provides the snow CryptoResolver
+# backed by the SDK's RNG, which is how bitwarden-ipc already drives Noise.
+bitwarden-random = { path = "../sdk-internal/crates/bitwarden-random", features = ["snow"] }
+
+base64 = "0.23"
+clap = { version = "4.6", features = ["derive"] }
+hex = "0.4"
+jsonwebtoken = { version = "11.1", features = ["rust_crypto"] }
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+snow = { version = "0.10.0", default-features = false, features = [
+    "default-resolver",
+    "default-resolver-crypto",
+    "use-p256",
+] }
+thiserror = "2.0"
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }
+url = "2.5"
+x509-parser = "0.18"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+unused_async = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[workspace.lints.rust]
+missing_docs = "warn"

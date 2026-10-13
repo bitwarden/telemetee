@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <Sdk Name="Bitwarden.Server.Sdk" />
+
+  <PropertyGroup>
+    <!-- Clients authenticate the collector by attestation, not the other way around. -->
+    <BitIncludeAuthentication>false</BitIncludeAuthentication>
+    <!-- No feature flags: nothing in this service may vary at runtime behind the measured code. -->
+    <BitIncludeFeatures>false</BitIncludeFeatures>
+    <!--
+      No default OpenTelemetry: per-request spans carry arrival time and user agent, which the collector
+      exists to strip. Any metric this service emits must be an explicit aggregate from its own meter.
+    -->
+    <BitIncludeTelemetry>false</BitIncludeTelemetry>
+    <UserSecretsId>bitwarden-Telemetee.Collector</UserSecretsId>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Telemetee.Attestation\Telemetee.Attestation.csproj" />
+    <ProjectReference Include="..\Telemetee.NoiseChannel\Telemetee.NoiseChannel.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Telemetee.Collector.IntegrationTest" />
+  </ItemGroup>
+
+</Project>

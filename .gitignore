@@ -1,3 +1,13 @@
+bin/
+obj/
+.direnv/
+target/
+*.user
+TestResults/
+deploy/*.generated*.json
+deploy/hostdata.txt
+deploy/policy.rego
+
 # General
 .DS_Store
 Thumbs.db

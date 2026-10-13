@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build collector",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/Telemetee.Collector/Telemetee.Collector.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["test", "${workspaceFolder}/telemetee.slnx"],
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "cli: echo against dev collector",
+      "type": "shell",
+      "command": "cargo run -q -p telemetee-cli -- --base-url http://localhost:5000 --collector-version 0.1.0 --issuer http://localhost:5000/0.1.0/dev-attestation --hostdata deddeb25294cf93ccc3ce5ef00b2b07ec84d2a1e0fa356f35cbea30dbc1e4618 echo \"hello from vscode\"",
+      "problemMatcher": []
+    }
+  ]
+}
