@@ -3,10 +3,12 @@
     <Project Path="src/Telemetee.Attestation/Telemetee.Attestation.csproj" />
     <Project Path="src/Telemetee.Collector/Telemetee.Collector.csproj" />
     <Project Path="src/Telemetee.NoiseChannel/Telemetee.NoiseChannel.csproj" />
+    <Project Path="src/Telemetee.Telemetry/Telemetee.Telemetry.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Telemetee.Attestation.Test/Telemetee.Attestation.Test.csproj" />
     <Project Path="test/Telemetee.Collector.IntegrationTest/Telemetee.Collector.IntegrationTest.csproj" />
     <Project Path="test/Telemetee.NoiseChannel.Test/Telemetee.NoiseChannel.Test.csproj" />
+    <Project Path="test/Telemetee.Telemetry.Test/Telemetee.Telemetry.Test.csproj" />
   </Folder>
 </Solution>

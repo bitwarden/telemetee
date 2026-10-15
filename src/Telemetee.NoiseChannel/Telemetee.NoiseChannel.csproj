@@ -6,6 +6,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Telemetee.NoiseChannel.Test" />
+    <InternalsVisibleTo Include="Telemetee.Telemetry" />
+    <InternalsVisibleTo Include="Telemetee.Telemetry.Test" />
     <InternalsVisibleTo Include="Telemetee.Collector.IntegrationTest" />
   </ItemGroup>
 
