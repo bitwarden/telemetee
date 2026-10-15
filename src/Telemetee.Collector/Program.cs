@@ -19,7 +19,7 @@ if (useDevelopmentIssuer)
 }
 
 builder.Services.AddNoiseChannel();
-builder.Services.AddAttestation();
+builder.Services.AddAttestation(CollectorVersion.Current);
 
 var app = builder.Build();
 

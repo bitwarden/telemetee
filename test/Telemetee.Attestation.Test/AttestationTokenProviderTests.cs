@@ -45,7 +45,7 @@ public class AttestationTokenProviderTests
         new FakeStaticKey(),
         Options.Create(new AttestationSettings { RefreshMargin = TimeSpan.FromMinutes(30) }),
         _time,
-        new AttestationMetrics(_meterFactory));
+        new AttestationMetrics(_meterFactory, "test"));
 
     [Fact]
     public async Task GetTokenAsync_SendsNoisePublicKeyAsRuntimeData()

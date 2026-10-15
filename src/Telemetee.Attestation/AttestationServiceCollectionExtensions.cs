@@ -1,4 +1,5 @@
-﻿using Bit.Telemetee.Attestation.Development;
+﻿using System.Diagnostics.Metrics;
+using Bit.Telemetee.Attestation.Development;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -11,12 +12,12 @@ public static class AttestationServiceCollectionExtensions
     /// Registers token acquisition through the attestation sidecar. Requires <c>AddNoiseChannel()</c> and a
     /// bound <see cref="AttestationSettings"/>.
     /// </summary>
-    public static IServiceCollection AddAttestation(this IServiceCollection services)
+    public static IServiceCollection AddAttestation(this IServiceCollection services, string collectorVersion)
     {
         services.AddHttpClient(SidecarAttestationTokenSource.HttpClientName);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IAttestationTokenSource, SidecarAttestationTokenSource>();
-        services.TryAddSingleton<AttestationMetrics>();
+        services.TryAddSingleton(sp => new AttestationMetrics(sp.GetRequiredService<IMeterFactory>(), collectorVersion));
         services.TryAddSingleton<AttestationTokenProvider>();
         return services;
     }
