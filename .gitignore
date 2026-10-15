@@ -7,6 +7,7 @@ TestResults/
 deploy/*.generated*.json
 deploy/hostdata.txt
 deploy/policy.rego
+artifacts/
 
 # General
 .DS_Store
