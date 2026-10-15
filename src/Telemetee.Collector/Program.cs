@@ -1,12 +1,13 @@
-﻿using Bit.Telemetee.Attestation;
+using Bit.Telemetee.Attestation;
 using Bit.Telemetee.Attestation.Development;
 using Bit.Telemetee.Collector;
 using Bit.Telemetee.NoiseChannel;
+using Bit.Telemetee.Telemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.UseBitwardenSdk();
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options => options.UseTelemetryRecordPolymorphism());
 builder.Services.AddHealthChecks();
 builder.Services.AddCollectorMetrics(builder.Configuration, builder.Environment);
 
@@ -18,8 +19,11 @@ if (useDevelopmentIssuer)
     builder.Services.AddDevelopmentAttestation();
 }
 
+builder.Services.Configure<TelemetrySettings>(builder.Configuration.GetSection("Telemetry"));
+
 builder.Services.AddNoiseChannel();
 builder.Services.AddAttestation(CollectorVersion.Current);
+builder.Services.AddTelemetry(CollectorVersion.Current);
 
 var app = builder.Build();
 
@@ -28,12 +32,15 @@ app.MapVersionEndpoint();
 app.MapHealthChecks("/healthz");
 app.MapOpenApi();
 
-var collector = app.MapGroup($"/{CollectorVersion.Current}");
-collector.MapGroup("/attestation").MapAttestationEndpoints();
-collector.MapNoiseChannelEndpoints();
+app.MapGroup("/attestation").MapAttestationEndpoints();
+app.MapTelemetryEndpoints(CollectorVersion.Current);
+if (app.Environment.IsDevelopment())
+{
+    app.MapGroup("/dev/telemetry").MapDevelopmentTelemetryEndpoints();
+}
 if (useDevelopmentIssuer)
 {
-    collector.MapGroup("/dev-attestation").MapDevelopmentAttestationIssuerEndpoints();
+    app.MapGroup("/dev/attestation").MapDevelopmentAttestationIssuerEndpoints();
 }
 
 app.Run();

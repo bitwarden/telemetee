@@ -28,7 +28,7 @@
     {
       "label": "cli: echo against dev collector",
       "type": "shell",
-      "command": "cargo run -q -p telemetee-cli -- --base-url http://localhost:5000 --collector-version 0.1.0 --issuer http://localhost:5000/0.1.0/dev-attestation --hostdata deddeb25294cf93ccc3ce5ef00b2b07ec84d2a1e0fa356f35cbea30dbc1e4618 echo \"hello from vscode\"",
+      "command": "cargo run -q -p telemetee-cli -- --base-url http://localhost:5000 --collector-version 0.1.0 --issuer http://localhost:5000/dev/attestation --hostdata deddeb25294cf93ccc3ce5ef00b2b07ec84d2a1e0fa356f35cbea30dbc1e4618 echo \"hello from vscode\"",
       "problemMatcher": []
     }
   ]

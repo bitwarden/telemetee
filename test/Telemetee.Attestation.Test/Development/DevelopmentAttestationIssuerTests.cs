@@ -22,7 +22,7 @@ public class DevelopmentAttestationIssuerTests
     {
         var settings = new DevelopmentAttestationSettings
         {
-            Issuer = new Uri("http://localhost:5000/0.1.0/dev-attestation/"),
+            Issuer = new Uri("http://localhost:5000/dev/attestation/"),
             HostData = new string('a', 64),
             TokenLifetime = TimeSpan.FromHours(8),
         };
@@ -32,8 +32,8 @@ public class DevelopmentAttestationIssuerTests
         var (header, payload) = Decode(token);
 
         Assert.Equal("RS256", header.GetProperty("alg").GetString());
-        Assert.Equal("http://localhost:5000/0.1.0/dev-attestation/certs", header.GetProperty("jku").GetString());
-        Assert.Equal("http://localhost:5000/0.1.0/dev-attestation", payload.GetProperty("iss").GetString());
+        Assert.Equal("http://localhost:5000/dev/attestation/certs", header.GetProperty("jku").GetString());
+        Assert.Equal("http://localhost:5000/dev/attestation", payload.GetProperty("iss").GetString());
         Assert.Equal(Now.ToUnixTimeSeconds(), payload.GetProperty("iat").GetInt64());
         Assert.Equal(Now.AddHours(8).ToUnixTimeSeconds(), payload.GetProperty("exp").GetInt64());
         Assert.Equal("sevsnpvm", payload.GetProperty("x-ms-attestation-type").GetString());

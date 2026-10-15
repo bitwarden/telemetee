@@ -522,11 +522,19 @@
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.15.3, )",
           "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
           "Telemetee.Attestation": "[0.1.0, )",
-          "Telemetee.NoiseChannel": "[0.1.0, )"
+          "Telemetee.NoiseChannel": "[0.1.0, )",
+          "Telemetee.Telemetry": "[0.1.0, )"
         }
       },
       "telemetee.noisechannel": {
         "type": "Project"
+      },
+      "telemetee.telemetry": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "[10.0.12, )",
+          "Telemetee.NoiseChannel": "[0.1.0, )"
+        }
       }
     }
   }

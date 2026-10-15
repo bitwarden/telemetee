@@ -24,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Telemetee.Attestation\Telemetee.Attestation.csproj" />
     <ProjectReference Include="..\Telemetee.NoiseChannel\Telemetee.NoiseChannel.csproj" />
+    <ProjectReference Include="..\Telemetee.Telemetry\Telemetee.Telemetry.csproj" />
   </ItemGroup>
 
   <ItemGroup>

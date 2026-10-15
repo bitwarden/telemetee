@@ -78,6 +78,13 @@
       },
       "telemetee.noisechannel": {
         "type": "Project"
+      },
+      "telemetee.telemetry": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "[10.0.12, )",
+          "Telemetee.NoiseChannel": "[0.1.0, )"
+        }
       }
     }
   }
