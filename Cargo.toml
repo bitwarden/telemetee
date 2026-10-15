@@ -6,13 +6,15 @@ members = ["crates/*"]
 version = "0.1.0"
 authors = ["Bitwarden Inc"]
 edition = "2024"
-rust-version = "1.88.0"
+rust-version = "1.97.1"
 license = "GPL-3.0-only OR LicenseRef-Bitwarden-SDK"
 
 [workspace.dependencies]
 # Local link to sdk-internal so this crate can move there unchanged. Provides the snow CryptoResolver
 # backed by the SDK's RNG, which is how bitwarden-ipc already drives Noise.
-bitwarden-random = { path = "../sdk-internal/crates/bitwarden-random", features = ["snow"] }
+bitwarden-random = { path = "../sdk-internal/crates/bitwarden-random", features = [
+    "snow",
+] }
 
 base64 = "0.23"
 clap = { version = "4.6", features = ["derive"] }
