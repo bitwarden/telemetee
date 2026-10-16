@@ -1,10 +1,12 @@
-//! Verifies a collector's attestation and exercises its Noise channel.
+//! Verifies a collector's attestation and sends telemetry pages against its channel.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use telemetee_client::{CollectorClient, attestation::AttestationPolicy};
+use telemetee_client::{
+    CollectorClient, attestation::AttestationPolicy, models::TelemetryRecord, page::Submission,
+};
 use url::Url;
 
 #[derive(Parser)]
@@ -14,7 +16,7 @@ struct Cli {
     #[arg(long)]
     base_url: Url,
 
-    /// Exact collector version, the URL path segment the client pins
+    /// Exact collector version this client was built against; sent in the Telemetee-Target-Version header
     #[arg(long)]
     collector_version: String,
 
@@ -34,10 +36,18 @@ struct Cli {
 enum Command {
     /// Fetch and verify the attestation token, printing its claims
     Attestation,
-    /// Send a message through the Noise channel and print what comes back
-    Echo {
-        /// Text to send
-        message: String,
+    /// Pack one or more records into a page and POST it to /telemetry.
+    ///
+    /// Each record is a flat JSON object of the form
+    /// `{"schema": "<name>", "<field>": <value>, ...}`.
+    Send {
+        /// JSON record. Repeat for multiple records in the same send.
+        #[arg(long = "record", required = true)]
+        records: Vec<String>,
+        /// Optional JWT. When set, every --record is submitted as an authed record under this
+        /// token. When unset, every --record is submitted anonymously.
+        #[arg(long)]
+        auth: Option<String>,
     },
 }
 
@@ -53,23 +63,56 @@ async fn main() -> ExitCode {
         Err(error) => return fail(error),
     };
 
-    let result = match cli.command {
-        Command::Attestation => client.attestation().await.map(|attestation| {
-            serde_json::to_string_pretty(&attestation.claims).unwrap_or_default()
-        }),
-        Command::Echo { message } => client
-            .echo(message.as_bytes())
-            .await
-            .map(|reply| String::from_utf8_lossy(&reply).into_owned()),
-    };
-
-    match result {
-        Ok(output) => {
-            println!("{output}");
-            ExitCode::SUCCESS
-        }
-        Err(error) => fail(error),
+    match cli.command {
+        Command::Attestation => match client.attestation().await {
+            Ok(attestation) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&attestation.claims).unwrap_or_default()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(error),
+        },
+        Command::Send { records, auth } => match send(&client, records, auth).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => fail(error),
+        },
     }
+}
+
+async fn send(
+    client: &CollectorClient,
+    records: Vec<String>,
+    auth: Option<String>,
+) -> Result<(), telemetee_client::Error> {
+    // JSON on the command line is deserialized straight into the generated TelemetryRecord enum.
+    // Unknown schema values or missing required fields fail here, before any crypto work.
+    let mut submissions = Vec::with_capacity(records.len());
+    for raw in records {
+        let event = serde_json::from_str::<TelemetryRecord>(&raw)?;
+        submissions.push(match &auth {
+            Some(token) => Submission::Authed {
+                token: token.clone(),
+                event,
+            },
+            None => Submission::Unauthed(event),
+        });
+    }
+    let outcome = client.send(&mut submissions).await?;
+    eprintln!(
+        "sent {} record(s) in {} page(s); {} dropped as oversize",
+        outcome.records_sent,
+        outcome.pages_sent,
+        outcome.oversize_dropped.len()
+    );
+    if !submissions.is_empty() {
+        eprintln!(
+            "{} record(s) remain in the queue after send",
+            submissions.len()
+        );
+    }
+    Ok(())
 }
 
 fn fail(error: telemetee_client::Error) -> ExitCode {

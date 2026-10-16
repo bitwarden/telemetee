@@ -10,11 +10,13 @@ license.workspace = true
 [dependencies]
 base64 = { workspace = true }
 bitwarden-random = { workspace = true }
+ciborium = { workspace = true }
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snow = { workspace = true }
+telemetee-api = { path = "../telemetee-api" }
 thiserror = { workspace = true }
 url = { workspace = true }
 x509-parser = { workspace = true }

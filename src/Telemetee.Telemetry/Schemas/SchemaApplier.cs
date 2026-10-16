@@ -204,4 +204,6 @@ internal enum DropReason
     MissingAuthClaim,
     /// <summary>Authed field was present but did not equal the corresponding JWT claim.</summary>
     ClaimMismatch,
+    /// <summary>The JWT accompanying an authed record failed to parse.</summary>
+    AuthMalformed,
 }

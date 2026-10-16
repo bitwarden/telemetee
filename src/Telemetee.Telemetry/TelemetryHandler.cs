@@ -81,16 +81,19 @@ internal sealed class TelemetryHandler
         {
             var reader = new CborReader(body, CborConformanceMode.Lax);
             reader.ReadStartMap();
+            List<string>? auths = null;
+            bool eventsRead = false;
             while (reader.PeekState() != CborReaderState.EndMap)
             {
                 var key = reader.ReadTextString();
                 switch (key)
                 {
-                    case "authed":
-                        ReadAuthedGroups(reader);
+                    case "auths":
+                        auths = ReadAuths(reader);
                         break;
-                    case "unauthed":
-                        ReadUnauthedEvents(reader);
+                    case "events":
+                        ReadEvents(reader, auths ?? []);
+                        eventsRead = true;
                         break;
                     default:
                         reader.SkipValue();
@@ -98,6 +101,11 @@ internal sealed class TelemetryHandler
                 }
             }
             reader.ReadEndMap();
+            if (!eventsRead)
+            {
+                // A body without an "events" entry carries no records; nothing to apply.
+                return;
+            }
         }
         catch (CborContentException)
         {
@@ -111,92 +119,77 @@ internal sealed class TelemetryHandler
         }
     }
 
-    private void ReadAuthedGroups(CborReader reader)
+    private static List<string> ReadAuths(CborReader reader)
     {
+        var auths = new List<string>();
         reader.ReadStartArray();
         while (reader.PeekState() != CborReaderState.EndArray)
         {
-            ReadAuthedGroup(reader);
+            auths.Add(reader.ReadTextString());
         }
         reader.ReadEndArray();
+        return auths;
     }
 
-    private void ReadAuthedGroup(CborReader reader)
+    private void ReadEvents(CborReader reader, IReadOnlyList<string> auths)
     {
-        reader.ReadStartMap();
-        string? token = null;
-        List<byte[]>? eventJsonBodies = null;
-        while (reader.PeekState() != CborReaderState.EndMap)
+        // Each event is a definite-length array: [auth_idx, record_cbor] for authed,
+        // [record_cbor] for unauthed. Authed events have been pre-parsed into claims per unique
+        // token so parsing the same JWT four times across one page costs nothing extra.
+        var claimsByIndex = new Dictionary<int, IReadOnlyDictionary<string, string>?>();
+
+        reader.ReadStartArray();
+        while (reader.PeekState() != CborReaderState.EndArray)
         {
-            var key = reader.ReadTextString();
-            switch (key)
+            var slotLength = reader.ReadStartArray();
+            if (slotLength == 1)
             {
-                case "auth":
-                    token = reader.ReadTextString();
-                    break;
-                case "events":
-                    eventJsonBodies = ReadEventsAsJson(reader);
-                    break;
-                default:
+                var json = ReadEventAsJson(reader);
+                Record(_applier.ApplyUnauthed(json));
+            }
+            else if (slotLength == 2)
+            {
+                var idx = (int)reader.ReadInt64();
+                var json = ReadEventAsJson(reader);
+                if (idx < 0 || idx >= auths.Count)
+                {
+                    _metrics.RecordDropped(ReasonTag(DropReason.MalformedRecord));
+                }
+                else
+                {
+                    if (!claimsByIndex.TryGetValue(idx, out var claims))
+                    {
+                        // parse claims once
+                        claims = JwtClaims.TryParse(auths[idx]);
+                        claimsByIndex[idx] = claims;
+                        if (claims is not null)
+                        {
+                            _metrics.AuthGroupUnverified();
+                        }
+                    }
+                    if (claims is null)
+                    {
+                        _metrics.RecordDropped(ReasonTag(DropReason.AuthMalformed));
+                    }
+                    else
+                    {
+                        Record(_applier.ApplyAuthed(json, claims));
+                    }
+                }
+            }
+            else
+            {
+                // Any other arity is a structural mismatch; skip the slot and count it as a
+                // malformed record rather than aborting the whole page.
+                for (var i = 0; i < slotLength; i++)
+                {
                     reader.SkipValue();
-                    break;
+                }
+                _metrics.RecordDropped(ReasonTag(DropReason.MalformedRecord));
             }
-        }
-        reader.ReadEndMap();
-
-        if (eventJsonBodies is null)
-        {
-            return;
-        }
-        if (string.IsNullOrEmpty(token))
-        {
-            foreach (var _ in eventJsonBodies)
-            {
-                _metrics.RecordDropped(ReasonTag(DropReason.MissingAuthClaim));
-            }
-            return;
-        }
-
-        var claims = JwtClaims.TryParse(token);
-        if (claims is null)
-        {
-            foreach (var _ in eventJsonBodies)
-            {
-                _metrics.RecordDropped("auth_malformed");
-            }
-            return;
-        }
-
-        // Phase A: tokens are parsed but not signature-verified. Count them so the gap is visible.
-        _metrics.AuthGroupUnverified();
-
-        foreach (var json in eventJsonBodies)
-        {
-            Record(_applier.ApplyAuthed(json, claims));
-        }
-    }
-
-    private void ReadUnauthedEvents(CborReader reader)
-    {
-        reader.ReadStartArray();
-        while (reader.PeekState() != CborReaderState.EndArray)
-        {
-            var json = ReadEventAsJson(reader);
-            Record(_applier.ApplyUnauthed(json));
+            reader.ReadEndArray();
         }
         reader.ReadEndArray();
-    }
-
-    private List<byte[]> ReadEventsAsJson(CborReader reader)
-    {
-        var list = new List<byte[]>();
-        reader.ReadStartArray();
-        while (reader.PeekState() != CborReaderState.EndArray)
-        {
-            list.Add(ReadEventAsJson(reader));
-        }
-        reader.ReadEndArray();
-        return list;
     }
 
     private static byte[] ReadEventAsJson(CborReader reader)
@@ -277,7 +270,7 @@ internal sealed class TelemetryHandler
             }
             else
             {
-                _metrics.RecordDropped("buffer_full");
+                _metrics.RecordDropped(ReasonTag(DropReason.BufferFull));
             }
         }
         else
@@ -296,6 +289,7 @@ internal sealed class TelemetryHandler
         DropReason.WrongAuthScope => "wrong_auth_scope",
         DropReason.MissingAuthClaim => "missing_auth_claim",
         DropReason.ClaimMismatch => "claim_mismatch",
+        DropReason.AuthMalformed => "auth_malformed",
         _ => "unknown",
     };
 }

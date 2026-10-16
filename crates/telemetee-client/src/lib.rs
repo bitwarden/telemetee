@@ -8,6 +8,13 @@ pub mod attestation;
 mod client;
 mod error;
 pub mod noise;
+pub mod page;
 
 pub use client::CollectorClient;
 pub use error::Error;
+
+/// Strongly-typed record variants, generated from the collector's OpenAPI document by
+/// `support/generate-client-bindings.sh`. One struct per `[Telemetry]`-marked POCO in
+/// `src/Telemetee.Telemetry/TelemetryData/`; wrap an instance in a [`page::Submission`] and pass
+/// it to [`CollectorClient::send`].
+pub use telemetee_api::models;

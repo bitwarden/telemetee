@@ -525,35 +525,64 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
     private static byte[] BuildPage(byte[] staticKey, params RecordJson[] records) =>
         BuildPage(staticKey, [], records);
 
+    /// <summary>
+    /// Builds one plaintext page in the shared wire format: a deduped <c>auths</c> table and a
+    /// flat <c>events</c> list where each entry is <c>[auth_idx, record]</c> for authed records
+    /// or <c>[record]</c> for unauthed ones. Authed groups are expanded here so each test can
+    /// still express "these records go under this token" without the caller having to pick
+    /// indices.
+    /// </summary>
     private static byte[] BuildPage(
         byte[] staticKey,
         IReadOnlyList<AuthedGroupJson> authedGroups,
         IReadOnlyList<RecordJson> unauthedRecords)
     {
-        var cborWriter = new System.Formats.Cbor.CborWriter(System.Formats.Cbor.CborConformanceMode.Lax);
-        cborWriter.WriteStartMap(2);
-        cborWriter.WriteTextString("authed");
-        cborWriter.WriteStartArray(authedGroups.Count);
+        var auths = new List<string>();
+        var events = new List<(int? AuthIdx, RecordJson Record)>();
         foreach (var group in authedGroups)
         {
-            cborWriter.WriteStartMap(2);
-            cborWriter.WriteTextString("auth");
-            cborWriter.WriteTextString(group.Token);
-            cborWriter.WriteTextString("events");
-            cborWriter.WriteStartArray(group.Events.Count);
+            var idx = auths.IndexOf(group.Token);
+            if (idx < 0)
+            {
+                auths.Add(group.Token);
+                idx = auths.Count - 1;
+            }
             foreach (var record in group.Events)
             {
-                WriteEventCbor(cborWriter, record);
+                events.Add((idx, record));
             }
-            cborWriter.WriteEndArray();
-            cborWriter.WriteEndMap();
         }
-        cborWriter.WriteEndArray();
-        cborWriter.WriteTextString("unauthed");
-        cborWriter.WriteStartArray(unauthedRecords.Count);
         foreach (var record in unauthedRecords)
         {
-            WriteEventCbor(cborWriter, record);
+            events.Add((null, record));
+        }
+
+        var cborWriter = new System.Formats.Cbor.CborWriter(System.Formats.Cbor.CborConformanceMode.Lax);
+        cborWriter.WriteStartMap(2);
+        cborWriter.WriteTextString("auths");
+        cborWriter.WriteStartArray(auths.Count);
+        foreach (var token in auths)
+        {
+            cborWriter.WriteTextString(token);
+        }
+        cborWriter.WriteEndArray();
+        cborWriter.WriteTextString("events");
+        cborWriter.WriteStartArray(events.Count);
+        foreach (var (authIdx, record) in events)
+        {
+            if (authIdx is int idx)
+            {
+                cborWriter.WriteStartArray(2);
+                cborWriter.WriteInt32(idx);
+                WriteEventCbor(cborWriter, record);
+                cborWriter.WriteEndArray();
+            }
+            else
+            {
+                cborWriter.WriteStartArray(1);
+                WriteEventCbor(cborWriter, record);
+                cborWriter.WriteEndArray();
+            }
         }
         cborWriter.WriteEndArray();
         cborWriter.WriteEndMap();
