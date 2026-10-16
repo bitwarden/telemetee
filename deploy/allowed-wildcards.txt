@@ -18,3 +18,8 @@ IDENTITY_API_VERSION=.+
 IDENTITY_HEADER=.+
 IDENTITY_SERVER_THUMBPRINT=.+
 azurecontainerinstance_restarted_by=.+
+
+# Operator-supplied credential for the Datadog logs intake. The sink is outside the privacy trust
+# boundary; the operator chooses whose Datadog account receives the batches. Changing the key cannot
+# change what the collector does with user data, only where the anonymized output goes.
+Telemetry__DatadogApiKey=.+

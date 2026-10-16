@@ -23,6 +23,19 @@
         "description": "Microsoft shared attestation provider host. Clients pin this issuer."
       }
     },
+    "datadogSite": {
+      "type": "string",
+      "defaultValue": "datadoghq.com",
+      "metadata": {
+        "description": "Datadog logs intake site. Pinned as a literal into the policy; changing it is a new build."
+      }
+    },
+    "datadogApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Datadog API key for the logs intake. No default: the policy admits any value and the operator supplies it per deployment."
+      }
+    },
     "registryServer": {
       "type": "string",
       "defaultValue": "",
@@ -88,6 +101,14 @@
                 {
                   "name": "Attestation__MaaEndpoint",
                   "value": "[parameters('maaEndpoint')]"
+                },
+                {
+                  "name": "Telemetry__DatadogSite",
+                  "value": "[parameters('datadogSite')]"
+                },
+                {
+                  "name": "Telemetry__DatadogApiKey",
+                  "secureValue": "[parameters('datadogApiKey')]"
                 }
               ],
               "resources": {
