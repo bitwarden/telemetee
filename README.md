@@ -1,14 +1,16 @@
 # telemetee
 
-Anonymizing telemetry collector for Bitwarden clients, hosted in a Confidential ACI container that
-clients verify by attestation before sending anything. Design notes live in the research directory
-(`claude-research/anon-telemetry`); this repository is the implementation.
+Anonymizing telemetry collector for Bitwarden clients. The collector runs in a Confidential ACI
+container. Each client verifies the container by attestation before it sends anything. Design notes
+live in the research directory (`claude-research/anon-telemetry`); this repository is the
+implementation.
 
-Current state: milestone 2, the anonymized telemetry path. On top of the attested Noise channel from
-milestone 1, the collector now accepts fixed-size padded pages, applies a per-field schema
-(`keep`, `bucket`, `pseudonymize`, `authed`) with HMAC-SHA256 pseudonymization under a boot-time
-salt, batches accepted records in memory, stamps batch time, and posts to Datadog in arrival order
-so downstream research queries can sequence a user's events by grouping on any pseudonymized field.
+Current state: milestone 2, the anonymized telemetry path. Milestone 1 added the attested Noise
+channel; milestone 2 adds the pipeline on top. The collector accepts fixed-size padded pages. It
+applies a per-field schema (`keep`, `bucket`, `pseudonymize`, `authed`) and pseudonymizes with
+HMAC-SHA256 under a boot-time salt. It batches accepted records in memory, stamps each batch with
+the flush time, and posts to Datadog in arrival order. Arrival order lets a downstream query group
+on any pseudonymized field and sequence a user's events.
 
 ## Layout
 
@@ -30,9 +32,9 @@ The Rust crate links to `../sdk-internal` by path so it can move there unchanged
 
 ## Endpoints
 
-Endpoints live at the root. The deployment (reverse proxy, DNS, or separate deployments per build)
-is what maps a client to a specific collector version; the collector itself hosts one version at a
-time. See [Why version lives outside the API](#why-version-lives-outside-the-api).
+Endpoints live at the root. The deployment maps a client to a specific collector version through
+the reverse proxy, DNS, or a separate deployment per build. The collector itself hosts one version
+at a time. See [Why version lives outside the API](#why-version-lives-outside-the-api).
 
 | Method | Path                     | Purpose                                                                                                                       |
 | ------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -45,30 +47,30 @@ time. See [Why version lives outside the API](#why-version-lives-outside-the-api
 Plus `/version`, `/healthz`, and `/openapi/v1.json`.
 
 Every `POST /telemetry` must carry `Telemetee-Target-Version` equal to the collector's assembly
-version. The collector rejects a mismatched or missing header with 400 before any crypto work and
-counts it on `telemetee.pages` under outcome `rejected_version`. The handler never sees a page from
-a client that disagrees about the version, so field semantics cannot drift silently if a schema
-changes.
+version. The collector rejects a mismatched or missing header with 400 before any crypto work. It
+counts the rejection on `telemetee.pages` under outcome `rejected_version`. The handler never sees
+a page from a client that disagrees about the version, so field semantics cannot drift silently if
+a schema changes.
 
 ### Why version lives outside the API
 
-A collector pinned by attestation is pinned to one build. Each client holds a CCE policy hash
-(`x-ms-sevsnpvm-hostdata`) specific to the build it was shipped against; an older client reaching a
-newer collector cannot trust the newer attestation because it does not know the newer measurement.
-Routing multiple versions inside one API would route a stale client to a build it has no basis to
-trust.
+Attestation pins a collector to one build. Each client holds a CCE policy hash
+(`x-ms-sevsnpvm-hostdata`) specific to the build it shipped against, and an older client that
+reaches a newer collector cannot trust the newer attestation because it does not know the newer
+measurement. Routing multiple versions inside one API would route a stale client to a build it has
+no basis to trust.
 
 An external transparency log for build-to-measurement mappings would let a client discover and
 trust a newer measurement at request time, at which point multiple API versions could live behind
-one collector again. Until then, versioning is a deployment-layer concern and the in-protocol
+one collector again. Until then, versioning is a deployment-layer concern, and the in-protocol
 version check exists only to catch misconfigured infrastructure.
 
 ## Page and record format
 
-- One POST = one page = one NK handshake. Request body is exactly 4096 bytes; the collector rejects
-  any other length before running the handshake, so the edge sees a constant request size.
-- Response is exactly 81 bytes (`PageFormat.ResponseLength`) whether the handshake succeeded, every
-  record was accepted, every record was dropped, or the plaintext was all padding, so the response
+- One POST = one page = one NK handshake. The request body is exactly 4096 bytes. The collector
+  rejects any other length before it runs the handshake, so the edge sees a constant request size.
+- The response is exactly 81 bytes (`PageFormat.ResponseLength`) in every case: handshake success
+  or failure, every record accepted or dropped, or plaintext that was all padding. The response
   size reveals nothing.
 - Plaintext layout: `uint16-BE body_length || CBOR body || 0x00 padding`. The CBOR body is a
   single map:
@@ -82,66 +84,72 @@ version check exists only to catch misconfigured infrastructure.
     ]
   }
   ```
-  Each event is a CBOR map with a `schema` discriminator and the schema's fields. `events` is in
-  strict submission order. Same-token authed records share a single entry in `auths` so the
-  ~700-byte JWT is written once per user per page, not once per record.
-- Max record length is 1024 bytes. A record over the cap is dropped and counted; the walk continues.
-- Oversized records are also dropped client-side before any crypto work and returned to the
-  caller in `SendOutcome.oversize_dropped`.
+  Each event is a CBOR map with a `schema` discriminator and the schema's fields. The `events`
+  array is in strict submission order. If two authed records use the same token, they share a
+  single entry in `auths`, so the ~700-byte JWT is written once per user per page, not once per
+  record.
+- The maximum record length is 1024 bytes. The collector drops a record over the cap and counts
+  it; the walk continues.
+- The client also drops an oversized record before any crypto work and returns it to the caller
+  in `SendOutcome.oversize_dropped`.
 
 ## Schemas
 
-Schemas are declared as attributed POCOs under `src/Telemetee.Telemetry/TelemetryData/`. One POCO
-per schema; the type inherits from `TelemetryRecord`, the `[Telemetry("name")]` attribute names it
-on the wire, and every property carries one of `[Keep]`, `[Pseudonymize]`,
-`[Authed("<jwt-claim>")]`, or `[Bucket(nameof(...))]`. A schema is "authed" iff it declares any
-`[Authed]` field; its records are only accepted inside an authed group on the page. For each
-`[Authed]` field, the client sends the plaintext value it asserts; the collector rejects the
-record if that value does not equal the named JWT claim, and otherwise HMAC-pseudonymizes it
-under the per-boot salt before anything reaches the sink. Properties map PascalCase → snake_case on the wire. The schema set and the
-System.Text.Json polymorphism derived-type set are both discovered at startup by scanning the
-assembly for `[Telemetry]`-marked subtypes of `TelemetryRecord`, so adding a telemetry type is just
-dropping a POCO into `TelemetryData/` — no index to update, and the type immediately shows up in the
-OpenAPI document and generated client bindings. The code under `Schemas/` is machinery that
-interprets what is declared under `TelemetryData/` and should not change for routine schema work.
+Schemas are attributed POCOs under `src/Telemetee.Telemetry/TelemetryData/`. One POCO per schema.
+The type inherits from `TelemetryRecord`. The `[Telemetry("name")]` attribute names it on the
+wire. Every property carries one of `[Keep]`, `[Pseudonymize]`, `[Authed("<jwt-claim>")]`, or
+`[Bucket(nameof(...))]`. A schema is authed if it declares any `[Authed]` field; its records are
+only accepted inside an authed group on the page. For each `[Authed]` field, the client sends the
+plaintext value it asserts. The collector rejects the record if that value does not equal the
+named JWT claim, and otherwise HMAC-pseudonymizes it under the per-boot salt before anything
+reaches the sink. Properties map PascalCase → snake_case on the wire.
+
+The schema set and the System.Text.Json polymorphism derived-type set are both discovered at
+startup. The collector scans the assembly for `[Telemetry]`-marked subtypes of `TelemetryRecord`.
+To add a telemetry type, drop a POCO into `TelemetryData/`. There is no index to update, and the
+type immediately appears in the OpenAPI document and the generated client bindings. The code under
+`Schemas/` is machinery that interprets what is declared under `TelemetryData/`; it should not
+change for routine schema work.
+
 The collector ships three schemas:
 
 - `TelemetryData/FillAssistRuleOutcome.cs` — `rule_id` keep, `success` keep, `domain` keep,
   `client_version_major` bucket by release year.
-- `TelemetryData/GeneratedPassword.cs` — `kind` / character-class flags / `accepted` keep,
+- `TelemetryData/GeneratedPassword.cs` — `kind`, the character-class flags, and `accepted` keep.
   `length` and `word_count` bucket so an exact length never fingerprints the record.
 - `TelemetryData/AuthedGeneratedPassword.cs` — same shape as `GeneratedPassword` plus a `user_id`
   field marked `[Authed("sub")]`. Reported only from authenticated sessions. The client sends
-  `user_id` as the plaintext id it claims this record belongs to; the collector rejects the record
-  if that value does not equal the JWT's `sub` claim and otherwise HMAC-pseudonymizes it. The
-  wire output has the pseudonym, giving research a per-user dimension without the client getting
-  to pick the identity unilaterally.
+  `user_id` as the plaintext id it claims this record belongs to. The collector rejects the record
+  if that value does not equal the JWT's `sub` claim, and otherwise HMAC-pseudonymizes it. The
+  wire output has the pseudonym, which gives research a per-user dimension without the client
+  picking the identity unilaterally.
 
-A record that carries a field the schema does not declare has that field silently dropped and the
-rest of the record kept, so older collectors stay forward-compatible with newer clients.
+If a record carries a field the schema does not declare, the collector drops that field silently
+and keeps the rest of the record, so older collectors stay forward-compatible with newer clients.
 
 `[Pseudonymize]` is defined as a type-system option but is expected to be rare. The salt is
-per-process and per-instance, so a pseudonym only enables within-boot correlation; in most schemas
-omitting the field from the POCO entirely is strictly better. In this schema specifically,
+per-process and per-instance, so a pseudonym enables only within-boot correlation; for most
+schemas, omitting the field from the POCO is strictly better. In this schema specifically,
 pseudonymizing an installation id would let the sink correlate fill outcomes to a stable per-boot
 identifier, which would leak the shape of one user's vault across their events.
 
 Pseudonymization is HMAC-SHA256 under a 32-byte salt drawn once at boot. The salt lives in memory
-only and is lost on restart. Records with an unknown schema, an undeclared field, malformed JSON, or
-over the record cap are dropped and counted on `telemetee.batch.records_dropped` with a reason tag.
+only and is lost on restart. The collector drops and counts records with an unknown schema, an
+undeclared field, malformed JSON, or over the record cap. The reason tag appears on
+`telemetee.batch.records_dropped`.
 
 ## Batching and sink
 
 Accepted records go into a fixed-capacity in-memory buffer (default 1024). A background flusher
 drains the buffer every 30 seconds in arrival order, stamps each record with the flush time, and
-posts the batch to Datadog's logs intake at `https://http-intake.logs.<site>/api/v2/logs`. A failed
-post drops the batch; there is no retry.
+posts the batch to Datadog's logs intake at `https://http-intake.logs.<site>/api/v2/logs`. A
+failed post drops the batch; there is no retry.
 
-Arrival order is preserved so a downstream query that groups by any pseudonymized field (user id,
-device id, whatever the researcher cares about at query time) sees that key's events in the order
-they happened. Batch-time coarsening is the only timing granularity that leaves the collector — the
-record carries no per-event timestamp — so an observer can order events within a 30-second window
-for a given pseudonym, not within a tighter interval.
+The collector preserves arrival order so a downstream query that groups by any pseudonymized field
+(user id, device id, whatever the researcher cares about at query time) sees that key's events in
+the order they happened. Batch-time coarsening is the only timing granularity that leaves the
+collector; the record carries no per-event timestamp, so an observer can order events within a
+30-second window for a given pseudonym, not within a tighter interval.
 
 Metrics on the `Bitwarden.Telemetee` meter. Every measurement carries a `collector_version` tag
 equal to the collector's assembly version.
@@ -153,40 +161,42 @@ equal to the collector's assembly version.
   pre-existing reasons).
 - `telemetee.batch.flushes` by outcome, `telemetee.batch.records_per_flush` histogram, and
   `telemetee.batch.sink_failures`.
-- `telemetee.auth.groups` by outcome. Current implementation only emits `unverified` — tokens are
-  parsed to extract claims but not signature-verified. Phase B replaces this with concrete
+- `telemetee.auth.groups` by outcome. The current implementation only emits `unverified`: tokens
+  are parsed to extract claims but are not signature-verified. Phase B replaces this with concrete
   verify/reject outcomes once the JWKS fetch and `sig`/`exp`/`iss`/`aud` checks land.
 - `telemetee.attestation.refreshes` by outcome.
 
-The OTel export floor stays at 60 s so metric cadence remains above the batch flush cadence.
+The OTel export floor stays at 60 s so the metric cadence remains above the batch flush cadence.
 
 ### Why metrics, not logs
 
-The purpose of the project is to anonymize data. Templated log messages all have to be scrutinized for
-security and privacy violations, while metrics can be reasoned about in aggregate and used many times.
+The purpose of the project is to anonymize data. Every templated log message has to be scrutinized
+for security and privacy violations, while metrics can be reasoned about in aggregate and reused
+many times.
 
-Logs are fine on the sink side (ITelemetrySink post failures, flush exceptions) where the content already
-processed according to anonymization rules.
+Logs are fine on the sink side (ITelemetrySink post failures, flush exceptions) because the
+content is already processed under the anonymization rules.
 
 ## Client bindings
 
 `crates/telemetee-api/` is generated from the collector's OpenAPI document (`openapitools.json`
-pins generator 7.15.0). Regenerate after adding or changing a `[Telemetry]` POCO:
+pins generator 7.15.0). Regenerate after you add or change a `[Telemetry]` POCO:
 
 ```sh
 ./support/generate-client-bindings.sh
 ```
 
-The script boots the collector in Development on port 5050 — the dev-only `/dev/telemetry`
+The script boots the collector in Development on port 5050. The dev-only `/dev/telemetry`
 endpoint is what anchors every `TelemetryRecord` subtype in the OpenAPI schema, so a Production
-collector would emit a document missing them — fetches `/openapi/v1.json` into `artifacts/`, and
-runs `openapi-generator-cli` with the Rust generator over `crates/telemetee-api/`. Requires
-`java` and `npx` (both in the dev flake). Generated code is committed; `artifacts/` is not.
+collector would emit a document that misses them. The script fetches `/openapi/v1.json` into
+`artifacts/` and runs `openapi-generator-cli` with the Rust generator over
+`crates/telemetee-api/`. It requires `java` and `npx` (both in the dev flake). Generated code is
+committed; `artifacts/` is not.
 
 `telemetee-client` re-exports the generated models as `telemetee_client::models`. The sole public
-sender, [`CollectorClient::send`], is bound to the generated `TelemetryRecord` enum — the compiler
-rejects any other type, so there is no path to put an unknown schema or raw bytes on the wire from
-the public API. The raw page/byte path is crate-internal.
+sender, [`CollectorClient::send`], is bound to the generated `TelemetryRecord` enum. The compiler
+rejects any other type, so there is no path to put an unknown schema or raw bytes on the wire
+from the public API. The raw page/byte path is crate-internal.
 
 ```rust
 use telemetee_client::{CollectorClient, attestation::AttestationPolicy};
@@ -228,13 +238,13 @@ let outcome = client.send(&mut queue).await?;
 // wire are back at the front of `queue`, safe to retry on the next shipment.
 ```
 
-Same-token authed records share a single `auths` entry on the wire so the JWT isn't repeated per
-event. Mismatched placement (an authed schema in an unauthed submission or vice versa) is
-rejected server-side as `wrong_auth_scope`.
+If two authed records use the same token, they share a single `auths` entry on the wire, so the
+JWT is not repeated per event. Mismatched placement (an authed schema in an unauthed submission
+or the reverse) is rejected server-side as `wrong_auth_scope`.
 
-The CLI accepts flat JSON on the command line and `serde_json::from_str::<TelemetryRecord>` fails
-early on an unknown `schema` discriminator or missing required fields, so bad input never reaches
-the wire. Pass `--auth <jwt>` to submit the records as an authed group.
+The CLI accepts flat JSON on the command line. `serde_json::from_str::<TelemetryRecord>` fails
+early on an unknown `schema` discriminator or a missing required field, so bad input never
+reaches the wire. Pass `--auth <jwt>` to submit the records as an authed group.
 
 ## Run locally
 
@@ -246,8 +256,8 @@ cargo test --workspace
 ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Telemetee.Collector
 ```
 
-Development mode swaps the sidecar for a self-signed issuer that mints MAA-shaped tokens. Verify a
-token and send a page with the CLI, pinning the dev issuer and the dev hostdata from
+Development mode replaces the sidecar with a self-signed issuer that mints MAA-shaped tokens.
+Verify a token and send a page with the CLI. Pin the dev issuer and the dev hostdata from
 `appsettings.Development.json`:
 
 ```sh
@@ -259,15 +269,15 @@ cargo run -p telemetee-cli -- \
 ```
 
 Against a real deployment, `--issuer` is the Microsoft shared attestation provider the group was
-configured with and `--hostdata` is the value in the release artifact.
+configured with, and `--hostdata` is the value in the release artifact.
 
 ## Deploy
 
 See [deploy/README.md](deploy/README.md) for the deployment steps, the rules for secrets in the
-template, and how an outsider reproduces the hostdata from source. In short: `deploy/build-image.sh`
-for a reproducible image, `deploy/generate-policy.sh <image@digest>` for the policy and hostdata,
-`az deployment group create` with the generated template, passing the Datadog API key as a
-`datadogApiKey` parameter.
+template, and how an outsider reproduces the hostdata from source. In short: run
+`deploy/build-image.sh` for a reproducible image, run `deploy/generate-policy.sh <image@digest>`
+for the policy and hostdata, and run `az deployment group create` with the generated template.
+Pass the Datadog API key as a `datadogApiKey` parameter.
 
 The value clients pin must come from the release workflow's artifact, not from a local run, but
 anyone can reproduce it from the tagged source.
