@@ -1,9 +1,15 @@
-# Deploying the collector to Confidential ACI
+e# Deploying the collector to Confidential ACI
 
 Steps for a milestone 2 deployment: the attested Noise channel from milestone 1 plus the batched
-anonymized sink to Datadog. Everything runs from the direnv shell, which provides `az`, `dotnet`,
-and `cargo`. Docker must be running, because `confcom` hashes image layers through the local
-daemon.
+anonymized sink to Azure Blob Storage. `az`, `cargo`, and `dotnet` must be available.
+Docker must be running, because `confcom` hashes image layers through the
+local daemon.
+
+The sink writes Parquet to one virtual directory per schema under the configured container.
+`Azure.Storage.Blobs` addresses both plain Blob Storage and ADLS Gen2 (Blob Storage with
+Hierarchical Namespace enabled) with the same connection string. ADLS Gen2 is the recommended
+target because the <code>{schema}/{filename}</code> path becomes a real directory under HNS and
+the data lake query tooling (Synapse, Databricks, Fabric) consumes that layout natively.
 
 Region is East US 2, which has the Confidential ACI SKU and hosts the `sharedeus2` attestation
 provider the template defaults to. Resources go in the existing `vat-playground1` group in
@@ -23,9 +29,10 @@ az provider register -n Microsoft.ContainerRegistry
 Check with `az provider show -n Microsoft.ContainerInstance --query registrationState`. It must
 say `Registered` before step 1.
 
-You also need a Datadog API key for the destination account. Pass it as the `datadogApiKey`
-parameter in step 4. It is a `securestring` with no default, so it never enters the policy as a
-literal.
+You also need an Azure Storage connection string for the destination account. Pass it as the
+`blobStorageConnectionString` parameter in step 4, along with a `blobStorageContainer` name. Both
+are unpinned in the policy so an operator can redirect output without a new build; the collector
+enforces nothing about the destination because anonymization already ran upstream.
 
 ## 1. Subscription and a private registry
 
@@ -80,7 +87,11 @@ az deployment group create -g vat-playground1 \
   -p location=eastus2 \
   -p registryServer=<acrname>.azurecr.io \
   -p registryUsername=00000000-0000-0000-0000-000000000000 registryPassword="$TOKEN" \
-  -p datadogApiKey="$DATADOG_API_KEY"
+  -p blobStorageConnectionString="$BLOB_STORAGE_CONNECTION_STRING" \
+  -p blobStorageContainer=telemetry \
+  -p telemetryBufferCapacity=1024 \
+  -p telemetryTargetChunkRecords=512 \
+  -p telemetryTailMaxDelay=00:00:30
 
 az container show -g vat-playground1 -n telemetee-collector --query 'instanceView.state' -o tsv
 az container logs -g vat-playground1 -n telemetee-collector --container-name collector
@@ -110,9 +121,10 @@ $CLI send --record '{"schema":"fill_assist_rule_outcome","fields":{"rule_id":"r1
   reaching the claims output means it matched.
 - `x-ms-compliance-status` is `azure-compliant-uvm`.
 
-`send` returning without an error means the collector accepted the page. Within one flush
-interval (default 30 s) the record should appear in Datadog under `service:telemetee-collector`,
-with `client_version_major` as its bucket label.
+`send` returning without an error means the collector accepted the page. A new blob should
+appear under `<container>/fill_assist_rule_outcome/<guid>.parquet` in the configured storage
+account within one `FlushInterval` (plus up to `TailMaxDelay` if the chunk did not fill), with
+`client_version_major` as its bucket label.
 
 Negative checks worth running once; both should fail:
 
@@ -150,9 +162,16 @@ Two rules follow:
   qualifies; endpoints, environment names, and behavioural settings do not and stay literal.
 
 `deploy/allowed-wildcards.txt` is the reviewed list of accepted non-literal rules. Milestone 2
-added `Telemetry__DatadogApiKey=.+`: the Datadog site is a literal and pinned, so the operator
-can choose only *where* in Datadog the anonymized output lands, not what the collector does to
-records.
+added five:
+
+- `BlobStorageSink__ConnectionString=.+` and `BlobStorageSink__Container=.+` — the
+  operator chooses the destination storage account and container. The sink is outside the privacy
+  trust boundary; neither value can change what the collector does with user data.
+- `BlobStorageSink__TargetChunkRecords=.+` and `BlobStorageSink__TailMaxDelay=.+` — sink tuning
+  for blob granularity and tail flush latency. Both only affect how already-anonymized output is
+  batched into blobs, not what the collector does with user data.
+- `TelemetryIngestion__BufferCapacity=.+` — cap on in-memory records between flushes. Changes drop
+  rate under load but does not alter the anonymization applied to any retained record.
 
 ## Auditing a release
 

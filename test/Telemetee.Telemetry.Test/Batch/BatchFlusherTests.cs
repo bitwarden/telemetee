@@ -52,18 +52,45 @@ public class BatchFlusherTests
     }
 
     [Fact]
-    public async Task FailedFlush_DropsBatch_AndCountsSinkFailure()
+    public async Task FailedFlush_DropsBatch_AndCountsEveryLostRecord()
     {
         var env = Env(sink: new FailingSink());
         env.Buffer.TryAdd(Record("x"));
+        env.Buffer.TryAdd(Record("y"));
+        env.Buffer.TryAdd(Record("z"));
 
         using var sinkFailures = new MetricCollector<long>(
             env.Factory, TelemetryMetrics.MeterName, "telemetee.batch.sink_failures");
 
         await env.Flusher.FlushOnceAsync(CancellationToken.None);
 
-        Assert.Single(sinkFailures.GetMeasurementSnapshot());
+        var measurement = Assert.Single(sinkFailures.GetMeasurementSnapshot());
+        Assert.Equal(3, measurement.Value);
         Assert.Empty(env.Buffer.Drain());
+    }
+
+    [Fact]
+    public async Task PartialFlush_CountsOnlyTheLostRecords_AndReportsPartialOutcome()
+    {
+        // Three records in; sink reports two written and one lost. The lost count is what feeds
+        // the sink_failures counter — the two that landed must not be counted as failures.
+        var sink = new PartialSink(written: 2, lost: 1);
+        var env = Env(sink: sink);
+        env.Buffer.TryAdd(Record("x"));
+        env.Buffer.TryAdd(Record("y"));
+        env.Buffer.TryAdd(Record("z"));
+
+        using var sinkFailures = new MetricCollector<long>(
+            env.Factory, TelemetryMetrics.MeterName, "telemetee.batch.sink_failures");
+        using var flushes = new MetricCollector<long>(
+            env.Factory, TelemetryMetrics.MeterName, "telemetee.batch.flushes");
+
+        await env.Flusher.FlushOnceAsync(CancellationToken.None);
+
+        var failure = Assert.Single(sinkFailures.GetMeasurementSnapshot());
+        Assert.Equal(1, failure.Value);
+        var flush = Assert.Single(flushes.GetMeasurementSnapshot());
+        Assert.Equal("partial", flush.Tags["outcome"]);
     }
 
     private static AnonymizedRecord Record(string tag) =>
@@ -78,7 +105,7 @@ public class BatchFlusherTests
         var flusher = new BatchFlusher(
             buffer,
             actualSink,
-            Options.Create(new TelemetrySettings()),
+            Options.Create(new TelemetryIngestionSettings()),
             new TelemetryMetrics(factory, "test"),
             time ?? TimeProvider.System,
             NullLogger<BatchFlusher>.Instance);
@@ -91,17 +118,28 @@ public class BatchFlusherTests
     {
         public List<(DateTimeOffset Time, IReadOnlyList<AnonymizedRecord> Records)> Batches { get; } = [];
 
-        public Task<bool> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken)
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken)
         {
-            Batches.Add((batchTime, [.. records]));
-            return Task.FromResult(true);
+            // The flusher calls SendAsync on every tick. Test assertions here only care about calls
+            // that actually carried records.
+            if (records.Count > 0)
+            {
+                Batches.Add((batchTime, [.. records]));
+            }
+            return Task.FromResult(new SinkOutcome(Written: records.Count, Lost: 0));
         }
     }
 
     private sealed class FailingSink : ITelemetrySink
     {
-        public Task<bool> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
-            Task.FromResult(false);
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
+            Task.FromResult(new SinkOutcome(Written: 0, Lost: records.Count));
+    }
+
+    private sealed class PartialSink(int written, int lost) : ITelemetrySink
+    {
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
+            Task.FromResult(new SinkOutcome(Written: written, Lost: lost));
     }
 
     private sealed class TestMeterFactory : IMeterFactory

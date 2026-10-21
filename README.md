@@ -9,8 +9,9 @@ Current state: milestone 2, the anonymized telemetry path. Milestone 1 added the
 channel; milestone 2 adds the pipeline on top. The collector accepts fixed-size padded pages. It
 applies a per-field schema (`keep`, `bucket`, `pseudonymize`, `authed`) and pseudonymizes with
 HMAC-SHA256 under a boot-time salt. It batches accepted records in memory, stamps each batch with
-the flush time, and posts to Datadog in arrival order. Arrival order lets a downstream query group
-on any pseudonymized field and sequence a user's events.
+the flush time, and writes to Azure Blob Storage in arrival order, one blob per schema under its
+own virtual directory. Arrival order lets a downstream query group on any pseudonymized field and
+sequence a user's events.
 
 ## Layout
 
@@ -18,7 +19,7 @@ on any pseudonymized field and sequence a user's events.
 src/Telemetee.Collector/       ASP.NET Core host (Bitwarden.Server.Sdk, minimal APIs)
 src/Telemetee.Attestation/     MAA token acquisition via the aci/skr sidecar, plus a dev issuer
 src/Telemetee.NoiseChannel/    Noise NK responder over BCL crypto, static key
-src/Telemetee.Telemetry/       Page/record format, schema machinery, batch buffer, Datadog sink
+src/Telemetee.Telemetry/       Page/record format, schema machinery, batch buffer, Blob Storage sink
   TelemetryData/               The data: one attributed POCO per telemetry type
 test/                          xunit projects per library plus a WebApplicationFactory suite
 crates/telemetee-api/          Generated Rust types for every [Telemetry] POCO (see "Client bindings")
@@ -126,30 +127,116 @@ The collector ships three schemas:
 
 If a record carries a field the schema does not declare, the collector drops that field silently
 and keeps the rest of the record, so older collectors stay forward-compatible with newer clients.
+It drops and counts whole records with an unknown schema, malformed JSON, or over the record cap,
+with the reason tag on `telemetee.batch.records_dropped`.
 
-`[Pseudonymize]` is defined as a type-system option but is expected to be rare. The salt is
-per-process and per-instance, so a pseudonym enables only within-boot correlation; for most
-schemas, omitting the field from the POCO is strictly better. In this schema specifically,
-pseudonymizing an installation id would let the sink correlate fill outcomes to a stable per-boot
-identifier, which would leak the shape of one user's vault across their events.
+### Does batch_time anonymize this schema?
+
+Batch_time coarsens timing on every row, but it only prevents re-identification when a flush window
+carries enough records that a researcher cross-referencing the sink against production state still
+faces many plausible candidates per row. Estimate the schema's global events/sec and multiply
+by `FlushInterval`; if the product falls below 10, batching is not doing anonymizing work for
+this schema and the defense moves to the fields themselves. The usual shape is an
+org-level lifecycle event — SSO setup, a billing-plan change — where even a few events per day
+globally times any usable flush window stays well under the threshold. For a schema in that band,
+every retained field is a potential join key against production state, so audit each one for
+discriminating power and omit anything that would narrow candidates.
+
+### Judging a field's discriminating power
+
+For each retained field, ask three questions.
+
+**Value distribution.** How many distinct values can the field take, and how uneven is the
+distribution? A boolean split roughly 50/50 adds one bit of narrowing. A categorical with a
+dominant mode (90% English locale, say) adds less than one bit on average, and the long tail is
+where re-identification lands. A numeric or free-text field with per-entity variance adds many
+bits; use wide buckets or omit.
+
+**Join to production state.** Is the same field also present in the production DB for the same
+entity? Plan tier, release channel, locale, version string, feature state, geography — all
+visible to a researcher with DB access. Any such field becomes a join key, and the candidate set
+at the sink shrinks from "entities in the window" to "entities with matching value in prod." If
+the DB has fewer than ~100 rows matching the value, the join and time resolution information is
+strong enough to serve as an identifier on its own.
+
+**Repetition across rows.** Does the same entity emit the field many times? Stable per-entity
+values (version, locale, device shape) multiply across the entity's events, so an adversary
+intersects values across rows to narrow further. A field that only appears once per entity (a
+one-shot lifecycle event) is safer per-row but still subject to the batch_time check above.
+
+Multiply the number of plausible values each retained field can take. That product is the number
+of distinct value-combinations a record can land in. When the product exceeds the number of
+entities emitting records in the flush window, most entities get a value-combination of their own
+and any single row pins its entity down — even when no field in isolation looked dangerous. For
+scale: three fields with 100 plausible values each give one million combinations against on the
+order of 10,000 entities per flush window, so almost every row is unique. Sweeney's result that
+ZIP + date-of-birth + sex alone pins down ~87% of the US population comes out of the same math.
+Prefer bucket to keep, prefer omit to bucket; any field whose value the entity controls directly
+(UUIDs, free text, high-entropy strings, URLs, device names) must be omitted.
+
+k ≥ 10 is a floor, not a proof: ℓ-diversity, t-closeness, and differential privacy address
+attacks that k-anonymity does not, but the collector enforces none of them at runtime, so schema
+review is the compensating control.
+
+### Pseudonymized and authed schemas
+
+`[Pseudonymize]` is defined as a type-system option but is expected to be rare: the salt is
+per-process and per-instance, so a pseudonym enables only within-boot correlation, and for most
+schemas omitting the identifier field from the POCO is strictly better. `[Authed]` is the
+discipline for any schema that does need a verified identifier — the collector checks the
+client-asserted value against the JWT claim before pseudonymizing, so the client cannot pick the
+identity unilaterally and the sink cannot back-map the pseudonym to the plaintext. The shipped
+`AuthedGeneratedPassword` is the only schema that uses either attribute, and it earns the use
+because its pseudonymized `user_id` is verified against the JWT first. Pseudonymizing an
+installation id on a per-event schema like `FillAssistRuleOutcome` instead would let the sink
+correlate fill outcomes to a stable per-boot identifier and leak the shape of one user's vault
+across their events.
+
+A `[Pseudonymize]` or `[Authed]` field groups every event one entity emits during the collector's
+boot, which changes how the field checks above apply. The attacker evaluates the three questions
+against the pseudonym's full accumulated graph rather than against a single row, so one joinable
+field anywhere in that graph names the entity and unlocks all of it.
+
+The join-to-production check therefore becomes a hard no for pseudonymized schemas — not "narrow
+enough" but "not present at all." The value-combination bound applies across the pseudonym's
+lifetime of events rather than one flush window, so a boolean plus a coarse categorical plus a
+bucketed numeric can pin a pseudonym down over a boot even when each flush window alone looks
+safe. The pseudonym itself does not enter the combination product; it is the identity being
+protected, not a value that discriminates among candidates.
 
 Pseudonymization is HMAC-SHA256 under a 32-byte salt drawn once at boot. The salt lives in memory
-only and is lost on restart. The collector drops and counts records with an unknown schema, an
-undeclared field, malformed JSON, or over the record cap. The reason tag appears on
-`telemetee.batch.records_dropped`.
+only and is lost on restart.
 
 ## Batching and sink
 
-Accepted records go into a fixed-capacity in-memory buffer (default 1024). A background flusher
-drains the buffer every 30 seconds in arrival order, stamps each record with the flush time, and
-posts the batch to Datadog's logs intake at `https://http-intake.logs.<site>/api/v2/logs`. A
-failed post drops the batch; there is no retry.
+Accepted records sit in a fixed-capacity in-memory buffer. A background flusher drains it on
+`FlushInterval` in arrival order and hands the batch to the Blob Storage sink. The sink groups
+by `schema`, writes `TargetChunkRecords`-sized Parquet chunks as blobs at
+`{container}/{schema}/{guid}.parquet`, and caches the trailing partial per schema so the next
+flush can roll it into a full chunk. A tail that never fills emits on its own once it ages past
+`TailMaxDelay`. The pipeline splits settings along the privacy boundary: ingestion-side values
+that affect anonymization live on `TelemetryIngestionSettings` (section `TelemetryIngestion`),
+and sink-side values that only touch already-anonymized output live on `BlobStorageSinkSettings`
+(section `BlobStorageSink`).
 
-The collector preserves arrival order so a downstream query that groups by any pseudonymized field
-(user id, device id, whatever the researcher cares about at query time) sees that key's events in
-the order they happened. Batch-time coarsening is the only timing granularity that leaves the
-collector; the record carries no per-event timestamp, so an observer can order events within a
-30-second window for a given pseudonym, not within a tighter interval.
+`FlushInterval` is a privacy coarsening the collector guarantees and is not derived from
+downstream convenience. Every row carries the `batch_time` of the flush it arrived on as a
+Parquet column, and the record carries no per-event timestamp, so an observer who groups by a
+pseudonymized field can order that entity's events within one flush window and no tighter.
+
+Parquet is the sink's single output format; JSON is the documented alternative if `Parquet.Net`
+ever has to be dropped (security advisory, licensing, unmaintained), but only one format is
+emitted at a time. A failed upload or serialization error drops that chunk only; the remaining
+chunks (including any aged-tail sweep) still get an attempt. The sink reports per-flush written
+and lost counts to the flusher, which routes them into the per-flush outcome (`sent`, `partial`,
+`failed`, `empty`) and adds every lost record to `telemetee.batch.sink_failures`. There is no
+retry.
+
+The sink uses `Azure.Storage.Blobs`, so both plain Blob Storage and ADLS Gen2 accounts (ADLS Gen2
+is Blob Storage with Hierarchical Namespace enabled) are valid destinations with the same
+connection string. On an HNS-enabled account the per-schema prefix becomes a real directory
+consumable by Spark/Trino/Fabric-shaped data lake tooling; on a plain account it stays a virtual
+directory.
 
 Metrics on the `Bitwarden.Telemetee` meter. Every measurement carries a `collector_version` tag
 equal to the collector's assembly version.
@@ -159,8 +246,9 @@ equal to the collector's assembly version.
 - `telemetee.batch.records_accepted` and `telemetee.batch.records_dropped` by reason
   (`wrong_auth_scope`, `missing_auth_claim`, `claim_mismatch`, `auth_malformed`, plus the
   pre-existing reasons).
-- `telemetee.batch.flushes` by outcome, `telemetee.batch.records_per_flush` histogram, and
-  `telemetee.batch.sink_failures`.
+- `telemetee.batch.flushes` by outcome (`sent`, `partial`, `failed`, `empty`),
+  `telemetee.batch.records_per_flush` histogram, and `telemetee.batch.sink_failures` (one unit
+  per lost record, not per failed flush).
 - `telemetee.auth.groups` by outcome. The current implementation only emits `unverified`: tokens
   are parsed to extract claims but are not signature-verified. Phase B replaces this with concrete
   verify/reject outcomes once the JWKS fetch and `sig`/`exp`/`iss`/`aud` checks land.
@@ -277,7 +365,7 @@ See [deploy/README.md](deploy/README.md) for the deployment steps, the rules for
 template, and how an outsider reproduces the hostdata from source. In short: run
 `deploy/build-image.sh` for a reproducible image, run `deploy/generate-policy.sh <image@digest>`
 for the policy and hostdata, and run `az deployment group create` with the generated template.
-Pass the Datadog API key as a `datadogApiKey` parameter.
+Pass the Azure Storage connection string as a `blobStorageConnectionString` parameter.
 
 The value clients pin must come from the release workflow's artifact, not from a local run, but
 anyone can reproduce it from the tagged source.

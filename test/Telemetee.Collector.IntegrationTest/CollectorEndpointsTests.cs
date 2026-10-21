@@ -672,16 +672,22 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
             }
         }
 
-        public Task<bool> SendAsync(
+        public Task<SinkOutcome> SendAsync(
             IReadOnlyList<AnonymizedRecord> records,
             DateTimeOffset batchTime,
             CancellationToken cancellationToken)
         {
+            // The flusher calls SendAsync on every tick (empty included) so stateful sinks can
+            // sweep aged state. The fixture here only cares about calls that carried records.
+            if (records.Count == 0)
+            {
+                return Task.FromResult(new SinkOutcome(Written: 0, Lost: 0));
+            }
             lock (_batches)
             {
                 _batches.Add(new CapturedBatch(batchTime, [.. records]));
             }
-            return Task.FromResult(true);
+            return Task.FromResult(new SinkOutcome(Written: records.Count, Lost: 0));
         }
     }
 

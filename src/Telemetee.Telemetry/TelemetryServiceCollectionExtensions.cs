@@ -16,7 +16,7 @@ public static class TelemetryServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the schema applier (built from every <c>[Telemetry]</c>-marked POCO in this
-    /// assembly), the pseudonym salt, the batch buffer, the Datadog sink, and the background flusher.
+    /// assembly), the pseudonym salt, the batch buffer, the Blob Storage sink, and the background flusher.
     ///
     /// Schemas are discovered and validated eagerly, inside this call, so a bad POCO (missing
     /// treatment, property-name snake_case collision, bad [Bucket] member reference, duplicate
@@ -55,15 +55,14 @@ public static class TelemetryServiceCollectionExtensions
         services.TryAddSingleton(sp => new SchemaApplier(list, sp.GetRequiredService<PseudonymSalt>()));
         services.TryAddSingleton<BatchBuffer>(sp =>
         {
-            var settings = sp.GetRequiredService<IOptions<TelemetrySettings>>().Value;
+            var settings = sp.GetRequiredService<IOptions<TelemetryIngestionSettings>>().Value;
             return new BatchBuffer(settings.BufferCapacity);
         });
         services.TryAddSingleton(sp => new TelemetryMetrics(sp.GetRequiredService<IMeterFactory>(), collectorVersion));
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<TelemetryHandler>();
 
-        services.AddHttpClient(DatadogSink.HttpClientName);
-        services.TryAddSingleton<ITelemetrySink, DatadogSink>();
+        services.TryAddSingleton<ITelemetrySink, BlobStorageSink>();
         services.AddHostedService<BatchFlusher>();
         return services;
     }

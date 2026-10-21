@@ -23,17 +23,34 @@
         "description": "Microsoft shared attestation provider host. Clients pin this issuer."
       }
     },
-    "datadogSite": {
+    "blobStorageContainer": {
       "type": "string",
-      "defaultValue": "datadoghq.com",
       "metadata": {
-        "description": "Datadog logs intake site. Pinned as a literal into the policy; changing it is a new build."
+        "description": "Blob container that receives flushed batches."
       }
     },
-    "datadogApiKey": {
+    "blobStorageConnectionString": {
       "type": "securestring",
       "metadata": {
-        "description": "Datadog API key for the logs intake. No default: the policy admits any value and the operator supplies it per deployment."
+        "description": "Azure Storage connection string for the destination account."
+      }
+    },
+    "telemetryBufferCapacity": {
+      "type": "int",
+      "metadata": {
+        "description": "Max records held in the in-memory buffer between flushes; excess records drop."
+      }
+    },
+    "telemetryTargetChunkRecords": {
+      "type": "int",
+      "metadata": {
+        "description": "Max records per emitted Parquet blob."
+      }
+    },
+    "telemetryTailMaxDelay": {
+      "type": "string",
+      "metadata": {
+        "description": "TimeSpan (hh:mm:ss) a cached partial chunk waits before the sink force-pushes it."
       }
     },
     "registryServer": {
@@ -103,12 +120,24 @@
                   "value": "[parameters('maaEndpoint')]"
                 },
                 {
-                  "name": "Telemetry__DatadogSite",
-                  "value": "[parameters('datadogSite')]"
+                  "name": "TelemetryIngestion__BufferCapacity",
+                  "value": "[string(parameters('telemetryBufferCapacity'))]"
                 },
                 {
-                  "name": "Telemetry__DatadogApiKey",
-                  "secureValue": "[parameters('datadogApiKey')]"
+                  "name": "BlobStorageSink__Container",
+                  "value": "[parameters('blobStorageContainer')]"
+                },
+                {
+                  "name": "BlobStorageSink__ConnectionString",
+                  "secureValue": "[parameters('blobStorageConnectionString')]"
+                },
+                {
+                  "name": "BlobStorageSink__TargetChunkRecords",
+                  "value": "[string(parameters('telemetryTargetChunkRecords'))]"
+                },
+                {
+                  "name": "BlobStorageSink__TailMaxDelay",
+                  "value": "[parameters('telemetryTailMaxDelay')]"
                 }
               ],
               "resources": {

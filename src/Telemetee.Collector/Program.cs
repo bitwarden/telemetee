@@ -3,6 +3,7 @@ using Bit.Telemetee.Attestation.Development;
 using Bit.Telemetee.Collector;
 using Bit.Telemetee.NoiseChannel;
 using Bit.Telemetee.Telemetry;
+using Bit.Telemetee.Telemetry.Sink;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.UseBitwardenSdk();
@@ -19,7 +20,14 @@ if (useDevelopmentIssuer)
     builder.Services.AddDevelopmentAttestation();
 }
 
-builder.Services.Configure<TelemetrySettings>(builder.Configuration.GetSection("Telemetry"));
+builder.Services.AddOptions<TelemetryIngestionSettings>()
+    .Bind(builder.Configuration.GetSection("TelemetryIngestion"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddOptions<BlobStorageSinkSettings>()
+    .Bind(builder.Configuration.GetSection("BlobStorageSink"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 builder.Services.AddNoiseChannel();
 builder.Services.AddAttestation(CollectorVersion.Current);

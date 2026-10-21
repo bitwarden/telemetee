@@ -19,7 +19,17 @@ IDENTITY_HEADER=.+
 IDENTITY_SERVER_THUMBPRINT=.+
 azurecontainerinstance_restarted_by=.+
 
-# Operator-supplied credential for the Datadog logs intake. The sink is outside the privacy trust
-# boundary; the operator chooses whose Datadog account receives the batches. Changing the key cannot
-# change what the collector does with user data, only where the anonymized output goes.
-Telemetry__DatadogApiKey=.+
+# Operator-supplied buffer cap. Bounds how many records fit between flushes; excess records drop
+# and are counted. Raising or lowering it changes drop rate under load, not what the collector
+# does with any record that is retained.
+TelemetryIngestion__BufferCapacity=.+
+
+# Operator-supplied destination for the Blob Storage sink.
+BlobStorageSink__ConnectionString=.+
+BlobStorageSink__Container=.+
+
+# Operator-supplied sink tuning. Blob granularity and tail timeout only affect how already-
+# anonymized output is batched into blobs; neither can change what the collector does with user
+# data.
+BlobStorageSink__TargetChunkRecords=.+
+BlobStorageSink__TailMaxDelay=.+

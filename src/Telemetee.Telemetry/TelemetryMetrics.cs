@@ -46,8 +46,8 @@ internal sealed class TelemetryMetrics
             description: "Record count observed on each flush, including empty flushes.");
         _sinkFailures = meter.CreateCounter<long>(
             "telemetee.batch.sink_failures",
-            unit: "{failure}",
-            description: "Flush posts the sink did not accept.");
+            unit: "{record}",
+            description: "Records the sink attempted but could not deliver.");
         _authGroups = meter.CreateCounter<long>(
             "telemetee.auth.groups",
             unit: "{group}",
@@ -72,17 +72,24 @@ internal sealed class TelemetryMetrics
     public void RecordDropped(string reason) =>
         _recordsDropped.Add(1, _versionTag, new KeyValuePair<string, object?>("reason", reason));
 
-    public void FlushSucceeded(int count)
+    public void FlushSucceeded(int written)
     {
         _flushes.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "sent"));
-        _recordsPerFlush.Record(count, _versionTag);
+        _recordsPerFlush.Record(written, _versionTag);
     }
 
-    public void FlushFailed(int count)
+    public void FlushPartiallyFailed(int written, int lost)
+    {
+        _flushes.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "partial"));
+        _recordsPerFlush.Record(written + lost, _versionTag);
+        _sinkFailures.Add(lost, _versionTag);
+    }
+
+    public void FlushFailed(int lost)
     {
         _flushes.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "failed"));
-        _recordsPerFlush.Record(count, _versionTag);
-        _sinkFailures.Add(1, _versionTag);
+        _recordsPerFlush.Record(lost, _versionTag);
+        _sinkFailures.Add(lost, _versionTag);
     }
 
     public void FlushEmpty()

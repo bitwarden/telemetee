@@ -10,14 +10,15 @@ namespace Bit.Telemetee.Telemetry.Batch;
 /// posts them to the sink in arrival order. Order preservation is deliberate: downstream research
 /// queries that group by any pseudonymized field see that user's events in the sequence they
 /// happened, without the collector having to pre-commit to a correlation key or emit per-record
-/// timestamps. A failed post drops the batch; retry would be state that outlives the flush and is
-/// deliberately out of this milestone.
+/// timestamps. The sink reports per-call written and lost counts; the flusher routes those into
+/// the per-flush outcome (sent, partial, failed, empty) and the records-lost counter. Lost
+/// records are not retried.
 /// </summary>
 internal sealed class BatchFlusher : BackgroundService
 {
     private readonly BatchBuffer _buffer;
     private readonly ITelemetrySink _sink;
-    private readonly TelemetrySettings _settings;
+    private readonly TelemetryIngestionSettings _settings;
     private readonly TelemetryMetrics _metrics;
     private readonly TimeProvider _time;
     private readonly ILogger<BatchFlusher> _logger;
@@ -25,7 +26,7 @@ internal sealed class BatchFlusher : BackgroundService
     public BatchFlusher(
         BatchBuffer buffer,
         ITelemetrySink sink,
-        IOptions<TelemetrySettings> settings,
+        IOptions<TelemetryIngestionSettings> settings,
         TelemetryMetrics metrics,
         TimeProvider time,
         ILogger<BatchFlusher> logger)
@@ -54,26 +55,34 @@ internal sealed class BatchFlusher : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Drains the buffer and calls the sink on every tick, including ticks where the buffer was
+    /// empty. The empty call is intentional: sinks that carry per-flush state (for example the
+    /// Blob Storage sink's tail cache) rely on the empty tick to flush aged state out even when
+    /// nothing new arrived.
+    /// </summary>
     internal async Task FlushOnceAsync(CancellationToken cancellationToken)
     {
         var records = _buffer.Drain();
-        if (records.Count == 0)
-        {
-            _metrics.FlushEmpty();
-            return;
-        }
-
         var batchTime = _time.GetUtcNow();
         try
         {
-            var sent = await _sink.SendAsync(records, batchTime, cancellationToken);
-            if (sent)
+            var outcome = await _sink.SendAsync(records, batchTime, cancellationToken);
+            if (outcome.Written == 0 && outcome.Lost == 0)
             {
-                _metrics.FlushSucceeded(records.Count);
+                _metrics.FlushEmpty();
+            }
+            else if (outcome.Lost == 0)
+            {
+                _metrics.FlushSucceeded(outcome.Written);
+            }
+            else if (outcome.Written == 0)
+            {
+                _metrics.FlushFailed(outcome.Lost);
             }
             else
             {
-                _metrics.FlushFailed(records.Count);
+                _metrics.FlushPartiallyFailed(outcome.Written, outcome.Lost);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

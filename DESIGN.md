@@ -7,7 +7,11 @@ container. Every client verifies the container by attestation before it sends an
 
 - Accepts fixed-size encrypted pages from pre-attested clients over a Noise channel.
 - Applies a declared per-field schema (`keep`, `bucket`, `pseudonymize`, `authed`).
-- Batches records in arrival order, stamps each with the flush time, and posts to Datadog.
+- Batches records in arrival order, stamps each with the flush time, and writes them to Azure
+  Blob Storage as Parquet under a per-schema virtual directory. The sink holds a per-schema tail
+  cache so partial chunks roll forward into the next flush instead of becoming small blobs; each
+  Parquet row carries its own `batch_time` column, so per-row stamp accuracy stays at
+  `FlushInterval` even when a blob mixes rows from several flushes.
 - Supports both anonymous and authenticated schemas. A schema is one or the other, never both.
 
 ## How a request flows
@@ -16,7 +20,7 @@ container. Every client verifies the container by attestation before it sends an
 sequenceDiagram
     participant C as Client
     participant K as Collector
-    participant D as Datadog
+    participant B as Blob Storage
     C->>K: GET /attestation
     K-->>C: MAA JWT bound to the VM-generated Noise static key
     Note over C: verify issuer + hostdata, extract noise_pub
@@ -24,7 +28,7 @@ sequenceDiagram
     C->>K: POST /telemetry  (NK msg 1 + Telemetee-Target-Version)
     K-->>C: NK msg 2 (constant 81 bytes, empty payload)
     Note over K: parse CBOR, verify JWTs,<br/>apply schema per record, buffer
-    K->>D: every 30s, drain in arrival order, stamp batch_time
+    K->>B: every FlushInterval, drain in arrival order, group by schema,<br/>write {schema}/{guid}.parquet
 ```
 
 Each plaintext page is `uint16-BE body_length || CBOR body || 0x00 padding`. The body is a single
@@ -82,8 +86,8 @@ exists only to catch misconfigured infrastructure.
 
 **Order-preserving batches, no shuffle.** The flusher drains in arrival order and stamps every
 record with the batch time. A `GROUP BY <pseudonymized field>` query at the sink reads that key's
-events in the order they happened, within one 30-second window. Per-event timestamps never leave
-the collector.
+events in the order they happened, within one flush window. Per-event timestamps never leave the
+collector.
 
 **Dedup table + per-event auth index.** A JWT dominates each record's byte budget. The CBOR body
 carries one deduped `auths` table and tags each event with an index into it, so a token used by N
