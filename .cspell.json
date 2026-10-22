@@ -2,7 +2,26 @@
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
   "version": "0.2",
   "unknownWords": "report-common-typos",
-  "flagWords": [],
+  "words": [
+    "anonymization",
+    "Bitwarden",
+    "Cdsv",
+    "Cesv",
+    "clippy",
+    "HMAC",
+    "jsonwebtoken",
+    "pseudonymization",
+    "pseudonymize",
+    "Pseudonymized",
+    "pseudonymizing",
+    "reqwest",
+    "serde",
+    "telemetee",
+    "thiserror"
+  ],
+  "flagWords": [
+    "hte"
+  ],
   "ignorePaths": [
     ".vscode",
     "**/.cspell.json",
