@@ -51,6 +51,25 @@ public sealed class AuthedGeneratedPassword : TelemetryRecord
     [Keep]
     public bool Accepted { get; init; }
 
-    public static readonly IBucketer LengthBuckets = GeneratedPassword.LengthBuckets;
-    public static readonly IBucketer WordCountBuckets = GeneratedPassword.WordCountBuckets;
+    public static readonly IBucketer<int> LengthBuckets = GeneratedPassword.LengthBuckets;
+    public static readonly IBucketer<int> WordCountBuckets = GeneratedPassword.WordCountBuckets;
+
+    /// <summary>
+    /// Sink shape for <see cref="AuthedGeneratedPassword"/>. The <c>user_id</c> field is a hex
+    /// HMAC pseudonym rather than the raw id; the rest mirror <see cref="GeneratedPassword.Sink"/>.
+    /// </summary>
+    public sealed class Sink : TelemetrySinkRecord, IRetained
+    {
+        public static TimeSpan RetentionTime => TimeSpan.FromYears(3);
+
+        public required string UserId { get; init; }
+        public required string Kind { get; init; }
+        public required string Length { get; init; }
+        public required string WordCount { get; init; }
+        public required bool HasLowercase { get; init; }
+        public required bool HasUppercase { get; init; }
+        public required bool HasDigits { get; init; }
+        public required bool HasSpecial { get; init; }
+        public required bool Accepted { get; init; }
+    }
 }

@@ -6,13 +6,12 @@ using Microsoft.Extensions.Options;
 namespace Bit.Telemetee.Telemetry.Batch;
 
 /// <summary>
-/// Drains the batch buffer on a fixed cadence, stamps the drained records with the flush time, and
-/// posts them to the sink in arrival order. Order preservation is deliberate: downstream research
-/// queries that group by any pseudonymized field see that user's events in the sequence they
-/// happened, without the collector having to pre-commit to a correlation key or emit per-record
-/// timestamps. The sink reports per-call written and lost counts; the flusher routes those into
-/// the per-flush outcome (sent, partial, failed, empty) and the records-lost counter. Lost
-/// records are not retried.
+/// Drains the batch buffer on a fixed cadence, stamps each drained record with the flush time and
+/// a per-flush monotonic sequence number, and posts them to the sink in arrival order. Order
+/// preservation is deliberate: downstream research queries that group by any pseudonymized field
+/// see that user's events in the sequence they happened. The sink reports
+/// per-call written and lost counts; the flusher routes those into the per-flush outcome (sent,
+/// partial, failed, empty) and the records-lost counter. Lost records are not retried.
 /// </summary>
 internal sealed class BatchFlusher : BackgroundService
 {
@@ -65,6 +64,12 @@ internal sealed class BatchFlusher : BackgroundService
     {
         var records = _buffer.Drain();
         var batchTime = _time.GetUtcNow();
+        for (var seq = 0L; seq < records.Count; seq++)
+        {
+            var record = records[(int)seq];
+            record.BatchTime = batchTime;
+            record.Seq = seq;
+        }
         try
         {
             var outcome = await _sink.SendAsync(records, batchTime, cancellationToken);

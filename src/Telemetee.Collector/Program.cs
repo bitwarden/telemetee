@@ -38,12 +38,12 @@ var app = builder.Build();
 app.UseSecurityHeaders();
 app.MapVersionEndpoint();
 app.MapHealthChecks("/healthz");
-app.MapOpenApi();
 
 app.MapGroup("/attestation").MapAttestationEndpoints();
 app.MapTelemetryEndpoints(CollectorVersion.Current);
 if (app.Environment.IsDevelopment())
 {
+    app.MapOpenApi();
     app.MapGroup("/dev/telemetry").MapDevelopmentTelemetryEndpoints();
 }
 if (useDevelopmentIssuer)

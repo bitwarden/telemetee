@@ -11,10 +11,6 @@ internal static class CollectorMetricsExtensions
 {
     private const string MeterName = "Bitwarden.Telemetee";
 
-    /// <summary>
-    /// Floor for the export interval. It must never be shorter than the batching window, or exported
-    /// counts would reveal arrival timing more precisely than the sink hop does.
-    /// </summary>
     private static readonly TimeSpan ExportInterval = TimeSpan.FromMinutes(1);
 
     public static IServiceCollection AddCollectorMetrics(

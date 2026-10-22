@@ -2,18 +2,19 @@ using System.Text;
 using System.Text.Json;
 using Bit.Telemetee.Telemetry.Pseudonymization;
 using Bit.Telemetee.Telemetry.Schemas;
+using Bit.Telemetee.Telemetry.TelemetryData;
 using Xunit;
 
 namespace Bit.Telemetee.Telemetry.Test.Schemas;
 
 public class SchemaApplierTests
 {
-    private readonly PseudonymSalt _salt = new();
+    private readonly PseudonymSaltFactory _saltFactory = new();
     private readonly SchemaApplier _applier;
 
     public SchemaApplierTests()
     {
-        _applier = new SchemaApplier(ProductionSchemas, _salt);
+        _applier = new SchemaApplier(new SchemaCatalog(ProductionDescriptors), _saltFactory);
     }
 
     [Fact]
@@ -27,39 +28,34 @@ public class SchemaApplierTests
             client_version_major = 2025,
         }));
 
-        Assert.Equal("r1", result.Record!.Fields["rule_id"]);
-        Assert.Equal(true, result.Record.Fields["success"]);
-        Assert.Equal("a.example", result.Record.Fields["domain"]);
+        var sink = Assert.IsType<FillAssistRuleOutcome.Sink>(result.Record);
+        Assert.Equal("r1", sink.RuleId);
+        Assert.True(sink.Success);
+        Assert.Equal("a.example", sink.Domain);
     }
 
     [Fact]
-    public void PseudonymizedField_IsStableWithinProcess_AndDifferentAcrossSalts()
+    public void PseudonymizedField_IsStableWithinProcess_AndDifferentAcrossSaltFactories()
     {
-        var pseudoSchema = new TelemetrySchema("pseudo", new Dictionary<string, FieldTreatment>
-        {
-            ["id"] = new FieldTreatment.Pseudonymize(),
-        });
-        var applier = new SchemaApplier([pseudoSchema], _salt);
+        var descriptor = SchemaBuilder.FromType(typeof(PseudoFixture));
+        var applier = new SchemaApplier(new SchemaCatalog([descriptor]), _saltFactory);
 
-        var first = applier.ApplyUnauthed(Encode("pseudo", new { id = "same" })).Record!;
-        var second = applier.ApplyUnauthed(Encode("pseudo", new { id = "same" })).Record!;
-        Assert.Equal(first.Fields["id"], second.Fields["id"]);
+        var first = applier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        var second = applier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        Assert.Equal(((PseudoFixture.Sink)first).Id, ((PseudoFixture.Sink)second).Id);
 
-        using var otherSalt = new PseudonymSalt();
-        var otherApplier = new SchemaApplier([pseudoSchema], otherSalt);
-        var afterRestart = otherApplier.ApplyUnauthed(Encode("pseudo", new { id = "same" })).Record!;
-        Assert.NotEqual(first.Fields["id"], afterRestart.Fields["id"]);
+        using var otherFactory = new PseudonymSaltFactory();
+        var otherApplier = new SchemaApplier(new SchemaCatalog([descriptor]), otherFactory);
+        var afterRestart = otherApplier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        Assert.NotEqual(((PseudoFixture.Sink)first).Id, ((PseudoFixture.Sink)afterRestart).Id);
     }
-
-
-    private static IEnumerable<TelemetrySchema> ProductionSchemas =>
-        SchemaBuilder.FromAssembly(typeof(TelemetryServiceCollectionExtensions).Assembly);
 
     [Fact]
     public void BucketedField_IsReplacedByItsLabel()
     {
-        var result = _applier.ApplyUnauthed(SampleRecord(clientVersionMajor: 2023));
-        Assert.Equal("<2024", result.Record!.Fields["client_version_major"]);
+        var result = _applier.ApplyUnauthed(SampleFillAssistRecord(clientVersionMajor: 2023));
+        var sink = Assert.IsType<FillAssistRuleOutcome.Sink>(result.Record);
+        Assert.Equal("<2024", sink.ClientVersionMajor);
     }
 
     [Fact]
@@ -82,18 +78,34 @@ public class SchemaApplierTests
             future_field = "sneaky",
         }));
         Assert.True(result.IsOk);
-        Assert.DoesNotContain("future_field", result.Record!.Fields.Keys);
-        Assert.Equal("r", result.Record.Fields["rule_id"]);
+        var sink = Assert.IsType<FillAssistRuleOutcome.Sink>(result.Record);
+        Assert.Equal("r", sink.RuleId);
     }
 
     [Fact]
-    public void Constructor_RejectsSchemasWithDuplicateNames()
+    public void MissingDeclaredField_IsMalformedRecord()
     {
-        var a = new TelemetrySchema("same", new Dictionary<string, FieldTreatment>());
-        var b = new TelemetrySchema("same", new Dictionary<string, FieldTreatment>());
+        // The compiled process requires every declared input field to be present. A record that
+        // omits one is malformed — the old behavior (quietly accept partial records) is gone, since
+        // the typed sink has required properties that must all be set.
+        var result = _applier.ApplyUnauthed(Encode("fill_assist_rule_outcome", new
+        {
+            rule_id = "r",
+            // success, domain, client_version_major missing
+        }));
+        Assert.False(result.IsOk);
+        Assert.Equal(DropReason.MalformedRecord, result.Reason);
+    }
 
-        var ex = Assert.Throws<InvalidOperationException>(() => new SchemaApplier([a, b], _salt));
-        Assert.Contains("same", ex.Message);
+    [Fact]
+    public void Catalog_RejectsSchemasWithDuplicateNames()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new SchemaCatalog([
+                SchemaBuilder.FromType(typeof(DupA)),
+                SchemaBuilder.FromType(typeof(DupB)),
+            ]));
+        Assert.Contains("dup", ex.Message);
     }
 
     [Fact]
@@ -114,16 +126,10 @@ public class SchemaApplierTests
         Assert.Equal(DropReason.MalformedRecord, result.Reason);
     }
 
-    [Fact]
-    public void RecordWithOnlyDiscriminator_IsEmptyButOk()
-    {
-        var bytes = Encoding.UTF8.GetBytes("{\"schema\": \"fill_assist_rule_outcome\"}");
-        var result = _applier.ApplyUnauthed(bytes);
-        Assert.True(result.IsOk);
-        Assert.Empty(result.Record!.Fields);
-    }
+    private static IEnumerable<SchemaDescriptor> ProductionDescriptors =>
+        SchemaBuilder.FromAssembly(typeof(TelemetryServiceCollectionExtensions).Assembly);
 
-    private static byte[] SampleRecord(int clientVersionMajor = 2025) =>
+    private static byte[] SampleFillAssistRecord(int clientVersionMajor = 2025) =>
         Encode("fill_assist_rule_outcome", new
         {
             rule_id = "r",
@@ -140,5 +146,44 @@ public class SchemaApplierTests
             merged[prop.Name] = prop.GetValue(fields);
         }
         return JsonSerializer.SerializeToUtf8Bytes(merged);
+    }
+
+    [Telemetry("pseudo_fixture")]
+    private sealed class PseudoFixture : TelemetryRecord
+    {
+        [Pseudonymize]
+        public string Id { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Id { get; init; }
+        }
+    }
+
+    [Telemetry("dup")]
+    private sealed class DupA : TelemetryRecord
+    {
+        [Keep]
+        public string Field { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Field { get; init; }
+        }
+    }
+
+    [Telemetry("dup")]
+    private sealed class DupB : TelemetryRecord
+    {
+        [Keep]
+        public string Other { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Other { get; init; }
+        }
     }
 }

@@ -15,12 +15,14 @@ namespace Bit.Telemetee.Telemetry;
 public static class TelemetryServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the schema applier (built from every <c>[Telemetry]</c>-marked POCO in this
-    /// assembly), the pseudonym salt, the batch buffer, the Blob Storage sink, and the background flusher.
+    /// Registers the schema catalog (built from every <c>[Telemetry]</c>-marked POCO in this
+    /// assembly), the pseudonym salt factory, the batch buffer, the Blob Storage sink, and the
+    /// background flusher.
     ///
     /// Schemas are discovered and validated eagerly, inside this call, so a bad POCO (missing
-    /// treatment, property-name snake_case collision, bad [Bucket] member reference, duplicate
-    /// [Telemetry] name) throws at service registration time rather than at the first request.
+    /// treatment, property-name snake_case collision, missing nested Sink, bad [Bucket] member,
+    /// treatment/sink-type mismatch, duplicate [Telemetry] name) throws at service registration
+    /// time rather than at the first request.
     /// </summary>
     public static IServiceCollection AddTelemetry(this IServiceCollection services, string collectorVersion)
     {
@@ -43,16 +45,18 @@ public static class TelemetryServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Overload for tests: register with a specific schema set so unit tests can exercise the eager
-    /// validation guarantees without crafting a scanned-assembly fixture.
+    /// Overload for tests: register with a specific descriptor set so unit tests can exercise
+    /// the eager validation guarantees without crafting a scanned-assembly fixture.
     /// </summary>
-    internal static IServiceCollection AddTelemetry(this IServiceCollection services, IEnumerable<TelemetrySchema> schemas, string collectorVersion = "test")
+    internal static IServiceCollection AddTelemetry(this IServiceCollection services, IEnumerable<SchemaDescriptor> descriptors, string collectorVersion = "test")
     {
-        var list = schemas.ToList();
-        SchemaApplier.EnsureUniqueNames(list);
+        var catalog = new SchemaCatalog(descriptors);
 
-        services.TryAddSingleton<PseudonymSalt>();
-        services.TryAddSingleton(sp => new SchemaApplier(list, sp.GetRequiredService<PseudonymSalt>()));
+        services.TryAddSingleton<PseudonymSaltFactory>();
+        services.TryAddSingleton(catalog);
+        services.TryAddSingleton(sp => new SchemaApplier(
+            sp.GetRequiredService<SchemaCatalog>(),
+            sp.GetRequiredService<PseudonymSaltFactory>()));
         services.TryAddSingleton<BatchBuffer>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<TelemetryIngestionSettings>>().Value;

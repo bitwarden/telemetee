@@ -7,9 +7,9 @@ namespace Bit.Telemetee.Telemetry.Test;
 
 /// <summary>
 /// The guarantees here are startup-time: a bad POCO must stop host boot, not break the first
-/// request. Each test uses the internal <c>AddTelemetry(services, schemas)</c> overload so the
-/// surface of "run the schema set through AddTelemetry" is exactly what the production parameterless
-/// overload does.
+/// request. Each test uses the internal <c>AddTelemetry(services, descriptors)</c> overload so
+/// the surface of "run the schema set through AddTelemetry" is exactly what the production
+/// parameterless overload does.
 /// </summary>
 public class TelemetryServiceCollectionExtensionsTests
 {
@@ -26,9 +26,9 @@ public class TelemetryServiceCollectionExtensionsTests
         // not happen inside the Assert.Throws block and the test would fail. The guarantee is that
         // the enumeration happens inside AddTelemetry.
         Assert.Throws<InvalidOperationException>(() =>
-            new ServiceCollection().AddTelemetry(LazyBadSchemas()));
+            new ServiceCollection().AddTelemetry(LazyBadDescriptors()));
 
-        static IEnumerable<TelemetrySchema> LazyBadSchemas()
+        static IEnumerable<SchemaDescriptor> LazyBadDescriptors()
         {
             yield return SchemaBuilder.FromType(typeof(MissingTreatmentPoco));
         }
@@ -37,11 +37,11 @@ public class TelemetryServiceCollectionExtensionsTests
     [Fact]
     public void AddTelemetry_DuplicateSchemaNames_ThrowsFromAddTelemetry()
     {
-        var a = new TelemetrySchema("dup", new Dictionary<string, FieldTreatment>());
-        var b = new TelemetrySchema("dup", new Dictionary<string, FieldTreatment>());
-
         var ex = Assert.Throws<InvalidOperationException>(() =>
-            new ServiceCollection().AddTelemetry([a, b]));
+            new ServiceCollection().AddTelemetry([
+                SchemaBuilder.FromType(typeof(DupA)),
+                SchemaBuilder.FromType(typeof(DupB)),
+            ]));
         Assert.Contains("dup", ex.Message);
     }
 
@@ -51,7 +51,7 @@ public class TelemetryServiceCollectionExtensionsTests
         Assert.Throws<InvalidOperationException>(() =>
             new ServiceCollection().AddTelemetry(LazyBuild()));
 
-        static IEnumerable<TelemetrySchema> LazyBuild()
+        static IEnumerable<SchemaDescriptor> LazyBuild()
         {
             yield return SchemaBuilder.FromType(typeof(SnakeCaseCollisionPoco));
         }
@@ -63,7 +63,7 @@ public class TelemetryServiceCollectionExtensionsTests
         Assert.Throws<InvalidOperationException>(() =>
             new ServiceCollection().AddTelemetry(LazyBuild()));
 
-        static IEnumerable<TelemetrySchema> LazyBuild()
+        static IEnumerable<SchemaDescriptor> LazyBuild()
         {
             yield return SchemaBuilder.FromType(typeof(BadBucketPoco));
         }
@@ -73,6 +73,12 @@ public class TelemetryServiceCollectionExtensionsTests
     private sealed class MissingTreatmentPoco : TelemetryRecord
     {
         public string Field { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Field { get; init; }
+        }
     }
 
     [Telemetry("snake_case_collision_poco")]
@@ -83,6 +89,12 @@ public class TelemetryServiceCollectionExtensionsTests
 
         [Keep]
         public string userId { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string UserId { get; init; }
+        }
     }
 
     [Telemetry("bad_bucket_poco")]
@@ -90,5 +102,37 @@ public class TelemetryServiceCollectionExtensionsTests
     {
         [Bucket("DoesNotExist")]
         public int Value { get; init; }
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Value { get; init; }
+        }
+    }
+
+    [Telemetry("extensions_dup")]
+    private sealed class DupA : TelemetryRecord
+    {
+        [Keep]
+        public string Field { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Field { get; init; }
+        }
+    }
+
+    [Telemetry("extensions_dup")]
+    private sealed class DupB : TelemetryRecord
+    {
+        [Keep]
+        public string Other { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Other { get; init; }
+        }
     }
 }

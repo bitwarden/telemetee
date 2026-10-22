@@ -21,7 +21,7 @@ public class BatchFlusherTests
     }
 
     [Fact]
-    public async Task Flush_StampsBatchTimeOnEveryRecord()
+    public async Task Flush_StampsBatchTimeAndMonotonicSeqOnEveryRecord()
     {
         var now = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
         var env = Env(time: new FakeTimeProvider(now));
@@ -33,6 +33,8 @@ public class BatchFlusherTests
         var batch = Assert.Single(env.Sink.Batches);
         Assert.Equal(now, batch.Time);
         Assert.Equal(2, batch.Records.Count);
+        Assert.All(batch.Records, r => Assert.Equal(now, r.BatchTime));
+        Assert.Equal([0L, 1L], batch.Records.Select(r => r.Seq));
     }
 
     [Fact]
@@ -48,7 +50,7 @@ public class BatchFlusherTests
         await env.Flusher.FlushOnceAsync(CancellationToken.None);
 
         var batch = Assert.Single(env.Sink.Batches);
-        Assert.Equal(tags, batch.Records.Select(r => r.Fields["x"]));
+        Assert.Equal(tags, batch.Records.Cast<TaggedSink>().Select(r => r.Tag));
     }
 
     [Fact]
@@ -93,8 +95,12 @@ public class BatchFlusherTests
         Assert.Equal("partial", flush.Tags["outcome"]);
     }
 
-    private static AnonymizedRecord Record(string tag) =>
-        new("fill_assist_rule_outcome", new Dictionary<string, object?> { ["x"] = tag });
+    private static TelemetrySinkRecord Record(string tag) => new TaggedSink { Tag = tag };
+
+    private sealed class TaggedSink : TelemetrySinkRecord
+    {
+        public required string Tag { get; init; }
+    }
 
     private static TestEnv Env(ITelemetrySink? sink = null, TimeProvider? time = null)
     {
@@ -116,9 +122,9 @@ public class BatchFlusherTests
 
     private sealed class RecordingSink : ITelemetrySink
     {
-        public List<(DateTimeOffset Time, IReadOnlyList<AnonymizedRecord> Records)> Batches { get; } = [];
+        public List<(DateTimeOffset Time, IReadOnlyList<TelemetrySinkRecord> Records)> Batches { get; } = [];
 
-        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken)
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<TelemetrySinkRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken)
         {
             // The flusher calls SendAsync on every tick. Test assertions here only care about calls
             // that actually carried records.
@@ -132,13 +138,13 @@ public class BatchFlusherTests
 
     private sealed class FailingSink : ITelemetrySink
     {
-        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<TelemetrySinkRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
             Task.FromResult(new SinkOutcome(Written: 0, Lost: records.Count));
     }
 
     private sealed class PartialSink(int written, int lost) : ITelemetrySink
     {
-        public Task<SinkOutcome> SendAsync(IReadOnlyList<AnonymizedRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
+        public Task<SinkOutcome> SendAsync(IReadOnlyList<TelemetrySinkRecord> records, DateTimeOffset batchTime, CancellationToken cancellationToken) =>
             Task.FromResult(new SinkOutcome(Written: written, Lost: lost));
     }
 

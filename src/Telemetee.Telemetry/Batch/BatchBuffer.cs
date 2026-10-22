@@ -11,16 +11,16 @@ internal sealed class BatchBuffer
 {
     private readonly int _capacity;
     private readonly object _gate = new();
-    private List<AnonymizedRecord> _records;
+    private List<TelemetrySinkRecord> _records;
 
     public BatchBuffer(int capacity)
     {
         _capacity = capacity;
-        _records = new List<AnonymizedRecord>(capacity);
+        _records = new List<TelemetrySinkRecord>(capacity);
     }
 
     /// <summary>Returns true if the record was accepted, false if the buffer was full.</summary>
-    public bool TryAdd(AnonymizedRecord record)
+    public bool TryAdd(TelemetrySinkRecord record)
     {
         lock (_gate)
         {
@@ -40,12 +40,12 @@ internal sealed class BatchBuffer
     /// order they happened. Batch-time coarsening is the only timing granularity that leaves the
     /// collector; precise per-record arrival time is never emitted.
     /// </summary>
-    public List<AnonymizedRecord> Drain()
+    public List<TelemetrySinkRecord> Drain()
     {
         lock (_gate)
         {
             var drained = _records;
-            _records = new List<AnonymizedRecord>(_capacity);
+            _records = new List<TelemetrySinkRecord>(_capacity);
             return drained;
         }
     }

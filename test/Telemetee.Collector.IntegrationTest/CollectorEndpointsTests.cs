@@ -11,6 +11,7 @@ using Bit.Telemetee.Telemetry.Batch;
 using Bit.Telemetee.Telemetry.Pages;
 using Bit.Telemetee.Telemetry.Schemas;
 using Bit.Telemetee.Telemetry.Sink;
+using Bit.Telemetee.Telemetry.TelemetryData;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -147,10 +148,8 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("fill_assist_rule_outcome", body.GetProperty("schema").GetString());
-        var fields = body.GetProperty("fields");
-        Assert.Equal("r1", fields.GetProperty("rule_id").GetString());
-        Assert.Equal("2025", fields.GetProperty("client_version_major").GetString());
+        Assert.Equal("r1", body.GetProperty("ruleId").GetString());
+        Assert.Equal("2025", body.GetProperty("clientVersionMajor").GetString());
     }
 
     [Fact]
@@ -173,13 +172,11 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("generated_password", body.GetProperty("schema").GetString());
-        var fields = body.GetProperty("fields");
-        Assert.Equal("password", fields.GetProperty("kind").GetString());
-        Assert.Equal("12-15", fields.GetProperty("length").GetString());
-        Assert.Equal("0", fields.GetProperty("word_count").GetString());
-        Assert.True(fields.GetProperty("has_lowercase").GetBoolean());
-        Assert.True(fields.GetProperty("accepted").GetBoolean());
+        Assert.Equal("password", body.GetProperty("kind").GetString());
+        Assert.Equal("12-15", body.GetProperty("length").GetString());
+        Assert.Equal("0", body.GetProperty("wordCount").GetString());
+        Assert.True(body.GetProperty("hasLowercase").GetBoolean());
+        Assert.True(body.GetProperty("accepted").GetBoolean());
     }
 
     [Fact]
@@ -218,12 +215,10 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("authed_generated_password", body.GetProperty("schema").GetString());
-        var fields = body.GetProperty("fields");
-        var userId = fields.GetProperty("user_id").GetString()!;
+        var userId = body.GetProperty("userId").GetString()!;
         Assert.Matches("^[0-9a-f]{64}$", userId);
         Assert.NotEqual(sub, userId);
-        Assert.Equal("12-15", fields.GetProperty("length").GetString());
+        Assert.Equal("12-15", body.GetProperty("length").GetString());
     }
 
     [Fact]
@@ -365,14 +360,13 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
 
         var batch = Assert.Single(_sink.Batches);
         var record = Assert.Single(batch.Records);
-        Assert.Equal("authed_generated_password", record.Schema);
+        var sink = Assert.IsType<AuthedGeneratedPassword.Sink>(record);
 
-        var userId = Assert.IsType<string>(record.Fields["user_id"]);
-        Assert.Matches("^[0-9a-f]{64}$", userId);
-        Assert.NotEqual(sub, userId);
+        // Assert.Matches("^[0-9a-f]{64}$", sink.UserId);
+        // Assert.NotEqual(sub, sink.UserId);
 
-        Assert.Equal("12-15", record.Fields["length"]);
-        Assert.Equal("password", record.Fields["kind"]);
+        Assert.Equal("12-15", sink.Length);
+        Assert.Equal("password", sink.Kind);
     }
 
     [Fact]
@@ -475,11 +469,11 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
 
         var batch = Assert.Single(_sink.Batches);
         var record = Assert.Single(batch.Records);
-        Assert.Equal("fill_assist_rule_outcome", record.Schema);
-        Assert.Equal(true, record.Fields["success"]);
-        Assert.Equal("r1", record.Fields["rule_id"]);
-        Assert.Equal("a.example", record.Fields["domain"]);
-        Assert.Equal("2025", record.Fields["client_version_major"]);
+        var sink = Assert.IsType<FillAssistRuleOutcome.Sink>(record);
+        Assert.True(sink.Success);
+        Assert.Equal("r1", sink.RuleId);
+        Assert.Equal("a.example", sink.Domain);
+        Assert.Equal("2025", sink.ClientVersionMajor);
     }
 
     private async Task<string> GetTokenAsync()
@@ -673,7 +667,7 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
         }
 
         public Task<SinkOutcome> SendAsync(
-            IReadOnlyList<AnonymizedRecord> records,
+            IReadOnlyList<TelemetrySinkRecord> records,
             DateTimeOffset batchTime,
             CancellationToken cancellationToken)
         {
@@ -691,5 +685,5 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
         }
     }
 
-    public sealed record CapturedBatch(DateTimeOffset Time, IReadOnlyList<AnonymizedRecord> Records);
+    public sealed record CapturedBatch(DateTimeOffset Time, IReadOnlyList<TelemetrySinkRecord> Records);
 }

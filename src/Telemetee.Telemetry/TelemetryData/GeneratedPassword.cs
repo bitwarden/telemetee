@@ -44,7 +44,7 @@ public sealed class GeneratedPassword : TelemetryRecord
     [Keep]
     public bool Accepted { get; init; }
 
-    public static readonly IBucketer LengthBuckets = new NumericRangeBucketer(
+    public static readonly IBucketer<int> LengthBuckets = new NumericRangeBucketer<int>(
         new NumericRange("<8", null, 8),
         new NumericRange("8-11", 8, 12),
         new NumericRange("12-15", 12, 16),
@@ -52,10 +52,28 @@ public sealed class GeneratedPassword : TelemetryRecord
         new NumericRange("20-31", 20, 32),
         new NumericRange("32+", 32, null));
 
-    public static readonly IBucketer WordCountBuckets = new NumericRangeBucketer(
+    public static readonly IBucketer<int> WordCountBuckets = new NumericRangeBucketer<int>(
         new NumericRange("0", null, 1),
         new NumericRange("1-3", 1, 4),
         new NumericRange("4-6", 4, 7),
         new NumericRange("7-9", 7, 10),
         new NumericRange("10+", 10, null));
+
+    /// <summary>
+    /// Sink shape for <see cref="GeneratedPassword"/>. Fields reflect the post-treatment types:
+    /// bucketed numeric inputs become their range labels, kept fields keep their native type.
+    /// </summary>
+    public sealed class Sink : TelemetrySinkRecord, IRetained
+    {
+        public static TimeSpan RetentionTime => TimeSpan.FromYears(3);
+
+        public required string Kind { get; init; }
+        public required string Length { get; init; }
+        public required string WordCount { get; init; }
+        public required bool HasLowercase { get; init; }
+        public required bool HasUppercase { get; init; }
+        public required bool HasDigits { get; init; }
+        public required bool HasSpecial { get; init; }
+        public required bool Accepted { get; init; }
+    }
 }

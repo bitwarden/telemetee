@@ -10,7 +10,7 @@ public sealed class TelemetryAttribute(string name) : Attribute
     public string Name { get; } = name;
 }
 
-/// <summary>Base for the field treatments. Exactly one of these must be on every property that reaches the wire.</summary>
+/// <summary>Base for the property treatments. Exactly one of these must be on every property that reaches the wire.</summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = false)]
 public abstract class TreatmentAttribute : Attribute
 {
@@ -41,10 +41,10 @@ public sealed class AuthedAttribute(string jwtClaim) : TreatmentAttribute
 }
 
 /// <summary>
-/// Field is classified by an <see cref="IBucketer"/>. The bucketer lives in a <c>public static
-/// readonly IBucketer</c> on the same class; <paramref name="bucketerMember"/> is its name (use
-/// <c>nameof</c>). The applier emits the label the bucketer returns, or drops the whole record if
-/// the bucketer returns null.
+/// Field is classified by an <see cref="IBucketer{TIn, TOut}"/>. The bucketer lives in a <c>public
+/// static readonly</c> member on the same class; <paramref name="bucketerMember"/> is its name
+/// (use <c>nameof</c>). The compiled process emits whatever the bucketer returns in place of the
+/// raw value, or drops the whole record if the bucketer returns null.
 /// </summary>
 public sealed class BucketAttribute(string bucketerMember) : TreatmentAttribute
 {

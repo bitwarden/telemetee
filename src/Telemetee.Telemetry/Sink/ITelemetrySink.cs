@@ -13,7 +13,7 @@ public interface ITelemetrySink
     /// <paramref name="records"/>.Count. No retry.
     /// </summary>
     Task<SinkOutcome> SendAsync(
-        IReadOnlyList<AnonymizedRecord> records,
+        IReadOnlyList<TelemetrySinkRecord> records,
         DateTimeOffset batchTime,
         CancellationToken cancellationToken);
 }

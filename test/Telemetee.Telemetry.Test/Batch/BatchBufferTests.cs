@@ -27,11 +27,15 @@ public class BatchBufferTests
         var drained = buffer.Drain();
         Assert.Equal(128, drained.Count);
         Assert.Equal(
-            Enumerable.Range(0, 128).Select(i => (object)i),
-            drained.Select(r => r.Fields["seq"]));
+            Enumerable.Range(0, 128),
+            drained.Cast<TaggedSink>().Select(r => r.Tag));
         Assert.Empty(buffer.Drain());
     }
 
-    private static AnonymizedRecord Record(int seq) =>
-        new("fill_assist_rule_outcome", new Dictionary<string, object?> { ["seq"] = seq });
+    private static TelemetrySinkRecord Record(int tag) => new TaggedSink { Tag = tag };
+
+    private sealed class TaggedSink : TelemetrySinkRecord
+    {
+        public required int Tag { get; init; }
+    }
 }

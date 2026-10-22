@@ -1,17 +1,18 @@
-using System.Text.Json;
-
 namespace Bit.Telemetee.Telemetry.Schemas;
 
 /// <summary>
-/// Classifies an input value into a bucket label. A schema's <c>[Bucket(nameof(X))]</c> attribute
-/// names a <c>public static readonly IBucketer</c> on the same type; the applier calls
-/// <see cref="Classify"/> for each record and emits the returned label in place of the raw value.
-/// Returning null means "no bucket matches this value," and the whole record is dropped.
+/// Classifies an input value of type <typeparamref name="TIn"/> into a string label. A schema's
+/// <c>[Bucket(nameof(X))]</c> attribute names a <c>public static readonly IBucketer&lt;TIn&gt;</c>
+/// on the same type; the compiled process extracts the field as <typeparamref name="TIn"/> once and
+/// hands the typed value here. Returning <c>null</c> means "no bucket matches," and the applier
+/// drops the whole record as <see cref="DropReason.MalformedRecord"/>.
 ///
-/// Input is a <see cref="JsonElement"/> so a bucketer can accept any JSON-expressible type (number,
-/// string for GUIDs or semvers or hostnames, bool, etc.) without the applier having to type-switch.
+/// The output is always a string because a bucket label must describe the bucketing methodology
+/// the researcher is reading against (the range, the equivalence class, the policy that assigned
+/// it). A numeric or enum output would hide that methodology behind a value the reader has to
+/// cross-reference.
 /// </summary>
-public interface IBucketer
+public interface IBucketer<in TIn>
 {
-    string? Classify(JsonElement value);
+    string? Classify(TIn value);
 }

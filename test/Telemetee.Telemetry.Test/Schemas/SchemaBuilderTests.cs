@@ -9,30 +9,28 @@ public class SchemaBuilderTests
     [Fact]
     public void FromType_UsesAttributeNameAsSchemaName()
     {
-        var schema = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
-        Assert.Equal("fill_assist_rule_outcome", schema.Name);
+        var descriptor = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
+        Assert.Equal("fill_assist_rule_outcome", descriptor.Name);
     }
 
     [Fact]
-    public void FromType_MapsPascalCaseToSnakeCase()
+    public void FromType_DerivesIsAuthedFromAnyAuthedField()
     {
-        var schema = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
-        Assert.Contains("rule_id", schema.Fields.Keys);
-        Assert.Contains("client_version_major", schema.Fields.Keys);
+        Assert.False(SchemaBuilder.FromType(typeof(FillAssistRuleOutcome)).IsAuthed);
+        Assert.True(SchemaBuilder.FromType(typeof(AuthedGeneratedPassword)).IsAuthed);
     }
 
     [Fact]
-    public void FromType_ReadsBucketerFromDeclaredMember()
+    public void FromType_ReadsRetentionFromSinkIRetained()
     {
-        var schema = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
-        var bucket = Assert.IsType<FieldTreatment.Bucket>(schema.Fields["client_version_major"]);
-        Assert.Same(FillAssistRuleOutcome.ClientVersionMajorBuckets, bucket.Bucketer);
+        var descriptor = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
+        Assert.Equal(FillAssistRuleOutcome.Sink.RetentionTime, descriptor.RetentionTime);
     }
 
     [Fact]
     public void FromType_RejectsPropertyMissingATreatment()
     {
-        Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(Missing)));
+        Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(MissingTreatment)));
     }
 
     [Fact]
@@ -50,13 +48,44 @@ public class SchemaBuilderTests
     }
 
     [Fact]
+    public void FromType_RejectsSchemaWithoutNestedSink()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(NoSink)));
+        Assert.Contains("Sink", ex.Message);
+    }
+
+    [Fact]
+    public void FromType_RejectsSinkThatDoesNotImplementIRetained()
+    {
+        Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(NoRetention)));
+    }
+
+    [Fact]
+    public void FromType_RejectsBucketerMemberMissing()
+    {
+        Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(BadBucket)));
+    }
+
+    [Fact]
+    public void FromType_RejectsKeepTypeMismatchBetweenInputAndSink()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(KeepTypeMismatch)));
+        Assert.Contains("[Keep]", ex.Message);
+    }
+
+    [Fact]
+    public void FromType_RejectsBucketWhoseInputTypeDoesNotMatchBucketer()
+    {
+        Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(BucketTypeMismatch)));
+    }
+
+    [Fact]
     public void FromType_SchemaWithMultiplePseudonymizedFields_IsAccepted()
     {
         // Pseudonymized fields are not reserved for one "correlation key"; researchers slice on
         // whichever pseudonym makes sense at query time. The builder must not restrict this.
-        var schema = SchemaBuilder.FromType(typeof(MultiPseudonymized));
-        Assert.IsType<FieldTreatment.Pseudonymize>(schema.Fields["user_id"]);
-        Assert.IsType<FieldTreatment.Pseudonymize>(schema.Fields["device_id"]);
+        var descriptor = SchemaBuilder.FromType(typeof(MultiPseudonymized));
+        Assert.Equal("multi_pseudonymized", descriptor.Name);
     }
 
     [Telemetry("multi_pseudonymized")]
@@ -67,15 +96,29 @@ public class SchemaBuilderTests
 
         [Pseudonymize]
         public string DeviceId { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+
+            public required string UserId { get; init; }
+            public required string DeviceId { get; init; }
+        }
     }
 
-    [Telemetry("missing_treatment")]
-    private sealed class Missing : TelemetryRecord
+    [Telemetry("missing_treatment_fixture")]
+    private sealed class MissingTreatment : TelemetryRecord
     {
         public string Field { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Field { get; init; }
+        }
     }
 
-    [Telemetry("collision")]
+    [Telemetry("collision_fixture")]
     private sealed class Collision : TelemetryRecord
     {
         [Keep]
@@ -83,12 +126,79 @@ public class SchemaBuilderTests
 
         [Keep]
         public string userId { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string UserId { get; init; }
+        }
     }
 
-    [Telemetry("detached")]
+    [Telemetry("detached_fixture")]
     private sealed class DetachedPoco
     {
         [Keep]
         public string Field { get; init; } = string.Empty;
+    }
+
+    [Telemetry("no_sink_fixture")]
+    private sealed class NoSink : TelemetryRecord
+    {
+        [Keep]
+        public string Field { get; init; } = string.Empty;
+    }
+
+    [Telemetry("no_retention_fixture")]
+    private sealed class NoRetention : TelemetryRecord
+    {
+        [Keep]
+        public string Field { get; init; } = string.Empty;
+
+        public sealed class Sink : TelemetrySinkRecord
+        {
+            public required string Field { get; init; }
+        }
+    }
+
+    [Telemetry("bad_bucket_fixture")]
+    private sealed class BadBucket : TelemetryRecord
+    {
+        [Bucket("DoesNotExist")]
+        public int Value { get; init; }
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Value { get; init; }
+        }
+    }
+
+    [Telemetry("keep_type_mismatch_fixture")]
+    private sealed class KeepTypeMismatch : TelemetryRecord
+    {
+        [Keep]
+        public int Count { get; init; }
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Count { get; init; }
+        }
+    }
+
+    [Telemetry("bucket_type_mismatch_fixture")]
+    private sealed class BucketTypeMismatch : TelemetryRecord
+    {
+        [Bucket(nameof(Buckets))]
+        public string Name { get; init; } = string.Empty;
+
+        public static readonly IBucketer<int> Buckets = new NumericRangeBucketer<int>(
+            new NumericRange("x", null, null));
+
+        public sealed class Sink : TelemetrySinkRecord, IRetained
+        {
+            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
+            public required string Name { get; init; }
+        }
     }
 }

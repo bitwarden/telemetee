@@ -27,9 +27,20 @@ public sealed class FillAssistRuleOutcome : TelemetryRecord
     [Bucket(nameof(ClientVersionMajorBuckets))]
     public int ClientVersionMajor { get; init; }
 
-    public static readonly IBucketer ClientVersionMajorBuckets = new NumericRangeBucketer(
+    public static readonly IBucketer<int> ClientVersionMajorBuckets = new NumericRangeBucketer<int>(
         new NumericRange("<2024", null, 2024),
         new NumericRange("2024", 2024, 2025),
         new NumericRange("2025", 2025, 2026),
         new NumericRange("2026+", 2026, null));
+
+    /// <summary>Sink shape for <see cref="FillAssistRuleOutcome"/>.</summary>
+    public sealed class Sink : TelemetrySinkRecord, IRetained
+    {
+        public static TimeSpan RetentionTime => TimeSpan.FromYears(3);
+
+        public required string RuleId { get; init; }
+        public required bool Success { get; init; }
+        public required string Domain { get; init; }
+        public required string ClientVersionMajor { get; init; }
+    }
 }

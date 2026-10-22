@@ -1,9 +1,10 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Bit.Telemetee.Telemetry.Schemas;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Parquet.Schema;
 using Parquet.Serialization;
 
 namespace Bit.Telemetee.Telemetry.Sink;
@@ -13,32 +14,39 @@ namespace Bit.Telemetee.Telemetry.Sink;
 /// chunk under its own per-schema virtual directory. The sink is outside the privacy trust
 /// boundary; anonymization runs in the schema layer before this.
 ///
-/// Each flush's incoming records are grouped by schema and combined with any cached tail from
-/// previous flushes. The combined per-schema stream is split into <c>TargetChunkRecords</c>-sized
-/// chunks; full chunks write immediately, the final partial per schema goes back into the
-/// per-schema tail cache. A sweep on every flusher tick emits any cached tail whose oldest record
+/// Each flush's incoming records are grouped by their sink type and combined with any cached tail
+/// from previous flushes. The combined per-type stream is split into <c>TargetChunkRecords</c>-
+/// sized chunks; full chunks write immediately, the final partial per type goes back into the
+/// per-type tail cache. A sweep on every flusher tick emits any cached tail whose oldest record
 /// has aged past <c>TailMaxDelay</c>, so quiet schemas eventually emit a partial blob instead of
-/// starving. Each Parquet row carries its original flush's <c>batch_time</c>, so a blob that
-/// mixes rows from several flushes does not loosen the per-row stamp accuracy.
+/// starving. Each record already carries its origin flush's <c>BatchTime</c> and per-flush
+/// <c>Seq</c> on itself, so a blob that mixes rows from several flushes preserves per-row stamp
+/// accuracy and arrival order without the sink having to intervene.
 /// </summary>
 internal sealed class BlobStorageSink : ITelemetrySink
 {
     private const string ParquetContentType = "application/vnd.apache.parquet";
-    private const string BatchTimeColumn = "batch_time";
+
+    private static readonly ConcurrentDictionary<Type, Func<IReadOnlyList<TelemetrySinkRecord>, Stream, CancellationToken, Task>> _serializers = new();
 
     private readonly BlobStorageSinkSettings _settings;
+    private readonly SchemaCatalog _catalog;
     private readonly ILogger<BlobStorageSink> _logger;
-    private readonly Dictionary<string, List<TimedRecord>> _tails = new(StringComparer.Ordinal);
+    private readonly Dictionary<Type, List<TelemetrySinkRecord>> _tails = new();
     private BlobContainerClient? _container;
 
-    public BlobStorageSink(IOptions<BlobStorageSinkSettings> settings, ILogger<BlobStorageSink> logger)
+    public BlobStorageSink(
+        IOptions<BlobStorageSinkSettings> settings,
+        SchemaCatalog catalog,
+        ILogger<BlobStorageSink> logger)
     {
         _settings = settings.Value;
+        _catalog = catalog;
         _logger = logger;
     }
 
     public async Task<SinkOutcome> SendAsync(
-        IReadOnlyList<AnonymizedRecord> records,
+        IReadOnlyList<TelemetrySinkRecord> records,
         DateTimeOffset batchTime,
         CancellationToken cancellationToken)
     {
@@ -52,12 +60,12 @@ internal sealed class BlobStorageSink : ITelemetrySink
             return new SinkOutcome(Written: 0, Lost: records.Count);
         }
 
-        // Fold every cached tail into the new records and chunk the combined per-schema stream
-        // so an active schema's tail gets first shot at filling a chunk this flush. Anything the
+        // Fold every cached tail into the new records and chunk the combined per-type stream so
+        // an active schema's tail gets first shot at filling a chunk this flush. Anything the
         // fold left behind whose oldest row has aged past the delay then goes out on its own so
         // a quiet schema does not starve. Both passes feed the same uploader; a chunk that fails
         // to serialize or upload is counted as lost but does not stop the remaining chunks.
-        var fresh = PrepareChunks(records, batchTime, _settings.TargetChunkRecords);
+        var fresh = PrepareChunks(records, _settings.TargetChunkRecords);
         var aged = CollectAgedTails(batchTime, _settings.TailMaxDelay);
 
         var freshOutcome = await EmitChunksAsync(container, fresh, cancellationToken);
@@ -68,24 +76,21 @@ internal sealed class BlobStorageSink : ITelemetrySink
     }
 
     /// <summary>
-    /// For each schema in <paramref name="records"/>, prepends the cached tail (if any) and
+    /// For each sink type in <paramref name="records"/>, prepends the cached tail (if any) and
     /// splits the combined records into chunks of exactly <paramref name="targetChunkRecords"/>.
-    /// New records are stamped with <paramref name="batchTime"/>; cached tail entries keep their
-    /// original flush time. The final partial per schema goes back into the tail cache.
+    /// The final partial per type goes back into the tail cache. Records keep whatever
+    /// <see cref="TelemetrySinkRecord.BatchTime"/> and <see cref="TelemetrySinkRecord.Seq"/> the
+    /// flusher assigned them on the flush they first arrived in; the sink never re-stamps.
     /// </summary>
-    internal List<(string Schema, IReadOnlyList<TimedRecord> Chunk)> PrepareChunks(
-        IReadOnlyList<AnonymizedRecord> records,
-        DateTimeOffset batchTime,
+    internal List<(Type SinkType, IReadOnlyList<TelemetrySinkRecord> Chunk)> PrepareChunks(
+        IReadOnlyList<TelemetrySinkRecord> records,
         int targetChunkRecords)
     {
-        var result = new List<(string, IReadOnlyList<TimedRecord>)>();
-        foreach (var group in records.GroupBy(r => r.Schema))
+        var result = new List<(Type, IReadOnlyList<TelemetrySinkRecord>)>();
+        foreach (var group in records.GroupBy(r => r.GetType()))
         {
-            List<TimedRecord> combined = _tails.TryGetValue(group.Key, out var tail) ? [.. tail] : [];
-            foreach (var record in group)
-            {
-                combined.Add(new TimedRecord(record, batchTime));
-            }
+            List<TelemetrySinkRecord> combined = _tails.TryGetValue(group.Key, out var tail) ? [.. tail] : [];
+            combined.AddRange(group);
 
             var offset = 0;
             while (offset + targetChunkRecords <= combined.Count)
@@ -111,26 +116,26 @@ internal sealed class BlobStorageSink : ITelemetrySink
     /// Returns every cached tail whose oldest record was stamped at or before
     /// <paramref name="now"/> - <paramref name="maxDelay"/>, removing them from the cache.
     /// </summary>
-    internal List<(string Schema, IReadOnlyList<TimedRecord> Chunk)> CollectAgedTails(
+    internal List<(Type SinkType, IReadOnlyList<TelemetrySinkRecord> Chunk)> CollectAgedTails(
         DateTimeOffset now,
         TimeSpan maxDelay)
     {
         var threshold = now - maxDelay;
-        var result = new List<(string, IReadOnlyList<TimedRecord>)>();
-        List<string>? expired = null;
-        foreach (var (schema, tail) in _tails)
+        var result = new List<(Type, IReadOnlyList<TelemetrySinkRecord>)>();
+        List<Type>? expired = null;
+        foreach (var (sinkType, tail) in _tails)
         {
-            if (tail.Count > 0 && tail[0].OriginBatchTime <= threshold)
+            if (tail.Count > 0 && tail[0].BatchTime <= threshold)
             {
-                result.Add((schema, tail));
-                (expired ??= []).Add(schema);
+                result.Add((sinkType, tail));
+                (expired ??= []).Add(sinkType);
             }
         }
         if (expired is not null)
         {
-            foreach (var schema in expired)
+            foreach (var sinkType in expired)
             {
-                _tails.Remove(schema);
+                _tails.Remove(sinkType);
             }
         }
         return result;
@@ -138,14 +143,14 @@ internal sealed class BlobStorageSink : ITelemetrySink
 
     private async Task<SinkOutcome> EmitChunksAsync(
         BlobContainerClient container,
-        List<(string Schema, IReadOnlyList<TimedRecord> Chunk)> chunks,
+        List<(Type SinkType, IReadOnlyList<TelemetrySinkRecord> Chunk)> chunks,
         CancellationToken cancellationToken)
     {
         var written = 0;
         var lost = 0;
-        foreach (var (schema, chunk) in chunks)
+        foreach (var (sinkType, chunk) in chunks)
         {
-            if (await WriteChunkAsync(container, schema, chunk, cancellationToken))
+            if (await WriteChunkAsync(container, sinkType, chunk, cancellationToken))
             {
                 written += chunk.Count;
             }
@@ -159,160 +164,61 @@ internal sealed class BlobStorageSink : ITelemetrySink
 
     private async Task<bool> WriteChunkAsync(
         BlobContainerClient container,
-        string schema,
-        IReadOnlyList<TimedRecord> chunk,
+        Type sinkType,
+        IReadOnlyList<TelemetrySinkRecord> chunk,
         CancellationToken cancellationToken)
     {
-        var path = $"{schema}/{Guid.NewGuid():N}.parquet";
+        var descriptor = _catalog.ForSinkType(sinkType);
+        var path = $"{descriptor.Name}/{Guid.NewGuid():N}.parquet";
         byte[] bytes;
         try
         {
-            bytes = await SerializeParquetAsync(chunk, cancellationToken);
+            bytes = await SerializeParquetAsync(sinkType, chunk, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError(
                 exception,
                 "Parquet serialization failed for schema {Schema} ({Count} records); dropping chunk.",
-                schema,
+                descriptor.Name,
                 chunk.Count);
             return false;
         }
         return await UploadAsync(container, path, bytes, cancellationToken);
     }
 
+    /// <summary>
+    /// Hands the chunk to <c>ParquetSerializer.SerializeAsync&lt;T&gt;</c> for the concrete sink
+    /// type. The Parquet schema is derived from the sink type's declared properties, so there is
+    /// no runtime inference across the batch — every blob of a given schema has the same column
+    /// list in the same order.
+    /// </summary>
     private static async Task<byte[]> SerializeParquetAsync(
-        IReadOnlyList<TimedRecord> chunk,
+        Type sinkType,
+        IReadOnlyList<TelemetrySinkRecord> chunk,
         CancellationToken cancellationToken)
     {
-        var (names, types) = InferColumns(chunk);
-        var fields = new DataField[names.Count + 1];
-        fields[0] = new DataField<long?>(BatchTimeColumn);
-        for (var i = 0; i < names.Count; i++)
-        {
-            fields[i + 1] = CreateDataField(names[i], types[i]);
-        }
-        var schema = new ParquetSchema(fields);
-
-        var rows = new List<IDictionary<string, object?>>(chunk.Count);
-        foreach (var timed in chunk)
-        {
-            var row = new Dictionary<string, object?>(names.Count + 1)
-            {
-                [BatchTimeColumn] = timed.OriginBatchTime.ToUnixTimeMilliseconds(),
-            };
-            for (var i = 0; i < names.Count; i++)
-            {
-                var name = names[i];
-                row[name] = timed.Record.Fields.TryGetValue(name, out var raw)
-                    ? Coerce(raw, types[i])
-                    : null;
-            }
-            rows.Add(row);
-        }
-
         using var buffer = new MemoryStream();
-        await ParquetSerializer.SerializeUntypedAsync(rows, schema, buffer, cancellationToken: cancellationToken);
+        await GetSerializer(sinkType)(chunk, buffer, cancellationToken).ConfigureAwait(false);
         return buffer.ToArray();
     }
 
     /// <summary>
-    /// Walks every record to collect the column list (union of field names, insertion-ordered by
-    /// first appearance) and infer a per-column CLR type. Mixed types in one column collapse to
-    /// <see cref="string"/>; an all-null column also defaults to string.
+    /// Resolves <c>ParquetSerializer.SerializeAsync&lt;T&gt;</c> once per sink type and caches the
+    /// closed delegate so later chunks skip the <c>GetMethods</c> scan and <c>Invoke</c> boxing.
     /// </summary>
-    private static (List<string> Names, List<Type> Types) InferColumns(IReadOnlyList<TimedRecord> chunk)
-    {
-        var names = new List<string>();
-        var types = new Dictionary<string, Type>();
-        foreach (var timed in chunk)
-        {
-            foreach (var (name, value) in timed.Record.Fields)
-            {
-                if (!types.ContainsKey(name))
-                {
-                    names.Add(name);
-                    types[name] = typeof(void);
-                }
-                if (value is null)
-                {
-                    continue;
-                }
-                var observed = NormalizeType(value.GetType());
-                var current = types[name];
-                if (current == typeof(void))
-                {
-                    types[name] = observed;
-                }
-                else if (current != observed)
-                {
-                    types[name] = typeof(string);
-                }
-            }
-        }
-        var typeList = new List<Type>(names.Count);
-        foreach (var name in names)
-        {
-            var t = types[name];
-            typeList.Add(t == typeof(void) ? typeof(string) : t);
-        }
-        return (names, typeList);
-    }
+    private static Func<IReadOnlyList<TelemetrySinkRecord>, Stream, CancellationToken, Task> GetSerializer(Type sinkType) =>
+        _serializers.GetOrAdd(sinkType, static t =>
+            typeof(BlobStorageSink)
+                .GetMethod(nameof(SerializeTypedAsync), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(t)
+                .CreateDelegate<Func<IReadOnlyList<TelemetrySinkRecord>, Stream, CancellationToken, Task>>());
 
-    private static Type NormalizeType(Type t)
-    {
-        if (t == typeof(int) || t == typeof(long) || t == typeof(short) || t == typeof(byte))
-        {
-            return typeof(long);
-        }
-        if (t == typeof(float) || t == typeof(double))
-        {
-            return typeof(double);
-        }
-        if (t == typeof(bool))
-        {
-            return typeof(bool);
-        }
-        return typeof(string);
-    }
-
-    private static DataField CreateDataField(string name, Type type)
-    {
-        if (type == typeof(bool))
-        {
-            return new DataField<bool?>(name);
-        }
-        if (type == typeof(long))
-        {
-            return new DataField<long?>(name);
-        }
-        if (type == typeof(double))
-        {
-            return new DataField<double?>(name);
-        }
-        return new DataField<string>(name);
-    }
-
-    private static object? Coerce(object? value, Type targetType)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-        if (targetType == typeof(bool))
-        {
-            return Convert.ToBoolean(value);
-        }
-        if (targetType == typeof(long))
-        {
-            return Convert.ToInt64(value);
-        }
-        if (targetType == typeof(double))
-        {
-            return Convert.ToDouble(value);
-        }
-        return value as string ?? value.ToString();
-    }
+    private static Task SerializeTypedAsync<T>(
+        IReadOnlyList<TelemetrySinkRecord> chunk,
+        Stream destination,
+        CancellationToken cancellationToken) where T : TelemetrySinkRecord =>
+        ParquetSerializer.SerializeAsync(chunk.Cast<T>(), destination, null, null, cancellationToken);
 
     private async Task<bool> UploadAsync(
         BlobContainerClient container,
@@ -352,7 +258,4 @@ internal sealed class BlobStorageSink : ITelemetrySink
         _container = container;
         return _container;
     }
-
-    /// <summary>One accepted record paired with the <c>batch_time</c> of the flush it arrived on.</summary>
-    internal readonly record struct TimedRecord(AnonymizedRecord Record, DateTimeOffset OriginBatchTime);
 }

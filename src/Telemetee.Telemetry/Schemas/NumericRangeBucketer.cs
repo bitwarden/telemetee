@@ -1,12 +1,14 @@
-using System.Text.Json;
-
 namespace Bit.Telemetee.Telemetry.Schemas;
 
 /// <summary>
-/// Classifies a JSON number into the first <see cref="NumericRange"/> whose half-open interval
-/// contains it. Returns null if the value is not a number or no range matches.
+/// Classifies a numeric value of type <typeparamref name="T"/> into the first
+/// <see cref="NumericRange"/> whose half-open interval contains it, emitting the range's label.
+/// Returns null when no range matches. Ranges are declared as <see cref="double"/> so one bucketer
+/// definition can serve any <see cref="IConvertible"/> numeric input: the classifier converts
+/// <paramref name="value"/> to <see cref="double"/> before comparing.
 /// </summary>
-public sealed class NumericRangeBucketer : IBucketer
+public sealed class NumericRangeBucketer<T> : IBucketer<T>
+    where T : IConvertible
 {
     private readonly IReadOnlyList<NumericRange> _ranges;
 
@@ -15,12 +17,9 @@ public sealed class NumericRangeBucketer : IBucketer
         _ranges = ranges;
     }
 
-    public string? Classify(JsonElement value)
+    public string? Classify(T value)
     {
-        if (!value.TryGetDouble(out var number))
-        {
-            return null;
-        }
+        var number = value.ToDouble(System.Globalization.CultureInfo.InvariantCulture);
         foreach (var range in _ranges)
         {
             var aboveMin = range.MinInclusive is null || number >= range.MinInclusive.Value;

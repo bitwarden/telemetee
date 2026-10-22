@@ -10,10 +10,10 @@ use crate::{
 
 const TARGET_VERSION_HEADER: &str = "Telemetee-Target-Version";
 
-/// Summary of a single [`CollectorClient::send`] call: how many records reached the wire, how many
-/// pages they packed into, and the records removed as oversize. The caller receives the oversize
-/// records as values (not just a count) so the originating schema can be logged or fixed; they
-/// cannot be shipped.
+/// Summary of a single [`CollectorClient::send`] call: how many records the client packed onto
+/// pages, how many pages those were, and the records the client refused to ship as oversize.
+/// The caller receives the oversize records as values so the originating schema can be logged or
+/// fixed, they cannot be shipped.
 #[derive(Debug)]
 pub struct SendOutcome {
     pub records_sent: usize,
