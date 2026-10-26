@@ -34,8 +34,12 @@ builder.Services.AddOptions<BlobStorageSinkSettings>()
     .Bind(builder.Configuration.GetSection("BlobStorageSink"))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<NoiseChannelSettings>()
+    .Bind(builder.Configuration.GetSection("NoiseChannel"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
-builder.Services.AddNoiseChannel();
+builder.Services.AddNoiseChannel(CollectorVersion.Current);
 builder.Services.AddAttestation(CollectorVersion.Current);
 builder.Services.AddTelemetry(CollectorVersion.Current);
 

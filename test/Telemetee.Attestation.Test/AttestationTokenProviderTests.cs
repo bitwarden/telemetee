@@ -1,4 +1,4 @@
-﻿using System.Buffers.Text;
+using System.Buffers.Text;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +14,6 @@ namespace Bit.Telemetee.Attestation.Test;
 public class AttestationTokenProviderTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 12, 0, 0, TimeSpan.Zero);
-    private static readonly byte[] PublicKey = Enumerable.Range(0, 65).Select(i => (byte)i).ToArray();
 
     private sealed class FakeTokenSource(params string[] tokens) : IAttestationTokenSource
     {
@@ -31,32 +30,30 @@ public class AttestationTokenProviderTests
         }
     }
 
-    private sealed class FakeStaticKey : INoiseStaticKey
-    {
-        public ReadOnlyMemory<byte> PublicKey => AttestationTokenProviderTests.PublicKey;
-    }
-
     private readonly FakeTimeProvider _time = new(Now);
     private readonly IMeterFactory _meterFactory =
         new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>();
+    private readonly NoiseStaticKey _staticKey = new();
 
     private AttestationTokenProvider CreateProvider(FakeTokenSource source) => new(
         source,
-        new FakeStaticKey(),
         Options.Create(new AttestationSettings { RefreshMargin = TimeSpan.FromMinutes(30) }),
         _time,
         new AttestationMetrics(_meterFactory, "test"));
 
     [Fact]
-    public async Task GetTokenAsync_SendsNoisePublicKeyAsRuntimeData()
+    public async Task GetTokenAsync_SendsScopedPublicKeyAsRuntimeData()
     {
         var source = new FakeTokenSource(FakeJwt(Now.AddHours(8)));
         using var provider = CreateProvider(source);
+        using var scope = _staticKey.AcquireScoped();
 
-        await provider.GetTokenAsync(CancellationToken.None);
+        await provider.GetTokenAsync(scope, CancellationToken.None);
 
         using var runtimeData = JsonDocument.Parse(source.LastRuntimeData!);
-        Assert.Equal(Convert.ToBase64String(PublicKey), runtimeData.RootElement.GetProperty("noise_pub").GetString());
+        Assert.Equal(
+            Convert.ToBase64String(scope.PublicKey.Span),
+            runtimeData.RootElement.GetProperty("noise_pub").GetString());
     }
 
     [Fact]
@@ -64,12 +61,13 @@ public class AttestationTokenProviderTests
     {
         var source = new FakeTokenSource(FakeJwt(Now.AddHours(8)), FakeJwt(Now.AddHours(16)));
         using var provider = CreateProvider(source);
+        using var scope = _staticKey.AcquireScoped();
 
-        var first = await provider.GetTokenAsync(CancellationToken.None);
+        var first = await provider.GetTokenAsync(scope, CancellationToken.None);
         _time.Advance(TimeSpan.FromHours(7).Add(TimeSpan.FromMinutes(29)));
-        var second = await provider.GetTokenAsync(CancellationToken.None);
+        var second = await provider.GetTokenAsync(scope, CancellationToken.None);
         _time.Advance(TimeSpan.FromMinutes(2));
-        var third = await provider.GetTokenAsync(CancellationToken.None);
+        var third = await provider.GetTokenAsync(scope, CancellationToken.None);
 
         Assert.Equal(first, second);
         Assert.NotEqual(first, third);
@@ -77,11 +75,38 @@ public class AttestationTokenProviderTests
     }
 
     [Fact]
+    public async Task GetTokenAsync_RefreshesEagerly_WhenCallerPresentsRotatedKey()
+    {
+        var source = new FakeTokenSource(FakeJwt(Now.AddHours(8)), FakeJwt(Now.AddHours(16)));
+        using var provider = CreateProvider(source);
+
+        string first;
+        using (var before = _staticKey.AcquireScoped())
+        {
+            first = await provider.GetTokenAsync(before, CancellationToken.None);
+        }
+
+        _time.Advance(TimeSpan.FromMinutes(10));
+        _staticKey.Rotate();
+
+        using var after = _staticKey.AcquireScoped();
+        var second = await provider.GetTokenAsync(after, CancellationToken.None);
+
+        Assert.Equal(2, source.Calls);
+        Assert.NotEqual(first, second);
+        using var runtimeData = JsonDocument.Parse(source.LastRuntimeData!);
+        Assert.Equal(
+            Convert.ToBase64String(after.PublicKey.Span),
+            runtimeData.RootElement.GetProperty("noise_pub").GetString());
+    }
+
+    [Fact]
     public async Task GetTokenAsync_TokenWithoutExp_Throws()
     {
         using var provider = CreateProvider(new FakeTokenSource(Jwt("{}")));
+        using var scope = _staticKey.AcquireScoped();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetTokenAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetTokenAsync(scope, CancellationToken.None));
     }
 
     [Fact]
@@ -89,10 +114,11 @@ public class AttestationTokenProviderTests
     {
         using var collector = new MetricCollector<long>(_meterFactory, AttestationMetrics.MeterName, "telemetee.attestation.refreshes");
         using var provider = CreateProvider(new FakeTokenSource(FakeJwt(Now.AddHours(8)), Jwt("{}")));
+        using var scope = _staticKey.AcquireScoped();
 
-        await provider.GetTokenAsync(CancellationToken.None);
+        await provider.GetTokenAsync(scope, CancellationToken.None);
         _time.Advance(TimeSpan.FromHours(8));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetTokenAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetTokenAsync(scope, CancellationToken.None));
 
         var outcomes = collector.GetMeasurementSnapshot().Select(m => (m.Tags["outcome"], m.Value)).ToList();
         Assert.Equal([("ok", 1L), ("error", 1L)], outcomes);

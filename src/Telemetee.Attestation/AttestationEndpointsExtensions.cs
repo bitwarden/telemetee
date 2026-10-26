@@ -1,4 +1,5 @@
 ﻿using Bit.Telemetee.Attestation.Development;
+using Bit.Telemetee.NoiseChannel;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -14,8 +15,12 @@ public static class AttestationEndpointsExtensions
         var group = endpoints.MapGroup("");
         group.WithTags("Attestation");
 
-        group.MapGet("", async (AttestationTokenProvider provider, CancellationToken cancellationToken) =>
-                Results.Ok(new AttestationResponse(await provider.GetTokenAsync(cancellationToken))))
+        group.MapGet("", async (
+                    AttestationTokenProvider provider,
+                    ScopedNoiseKey scopedKey,
+                    CancellationToken cancellationToken) =>
+                Results.Ok(new AttestationResponse(
+                    await provider.GetTokenAsync(scopedKey, cancellationToken))))
             .WithName("GetAttestation")
             .WithDescription("Returns the MAA token binding this collector's code identity to its Noise static key.");
 

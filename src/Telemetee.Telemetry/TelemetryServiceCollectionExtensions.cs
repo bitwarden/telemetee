@@ -64,7 +64,7 @@ public static class TelemetryServiceCollectionExtensions
         });
         services.TryAddSingleton(sp => new TelemetryMetrics(sp.GetRequiredService<IMeterFactory>(), collectorVersion));
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton<TelemetryHandler>();
+        services.TryAddScoped<TelemetryHandler>();
 
         services.TryAddSingleton<ITelemetrySink, BlobStorageSink>();
         services.AddHostedService<BatchFlusher>();

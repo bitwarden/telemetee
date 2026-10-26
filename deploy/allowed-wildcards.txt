@@ -33,3 +33,9 @@ BlobStorageSink__Container=.+
 # data.
 BlobStorageSink__TargetChunkRecords=.+
 BlobStorageSink__TailMaxDelay=.+
+
+# Operator-supplied Noise static key rotation interval. Defines the window during which a
+# single key is in use. The collector enforces a 15-minute floor and 7-day ceiling at startup;
+# the value cannot change what the collector does with any record, but does define the timeframe
+# a leaked key compromises cleartext TelemetryRecords.
+NoiseChannel__KeyRotationInterval=.+

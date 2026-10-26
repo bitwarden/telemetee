@@ -4,7 +4,7 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Bit.Telemetee.Collector;
+using Bit.Telemetee.NoiseChannel;
 using Bit.Telemetee.NoiseChannel.Protocol;
 using Bit.Telemetee.Telemetry;
 using Bit.Telemetee.Telemetry.Batch;
@@ -453,6 +453,48 @@ public class CollectorEndpointsTests : IClassFixture<CollectorEndpointsTests.Fix
         var payload = Base64Url.EncodeToString(
             JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object> { ["sub"] = sub }));
         return $"{header}.{payload}.";
+    }
+
+    [Fact]
+    public async Task Attestation_AfterKeyRotation_BindsToNewKey()
+    {
+        var firstToken = await GetTokenAsync();
+        var firstKey = GetNoisePubFromToken(firstToken);
+
+        _services.GetRequiredService<NoiseStaticKey>().Rotate();
+
+        var secondToken = await GetTokenAsync();
+        var secondKey = GetNoisePubFromToken(secondToken);
+
+        Assert.NotEqual(Convert.ToBase64String(firstKey), Convert.ToBase64String(secondKey));
+        Assert.NotEqual(firstToken, secondToken);
+    }
+
+    [Fact]
+    public async Task Telemetry_PageEncryptedToStaleKey_AfterRotation_IsRejectedWithoutSideEffect()
+    {
+        // Simulates the race the client-side retry is there to cover: the client fetched
+        // attestation on key K, the collector rotated to K+1, the client's POST arrives
+        // encrypted to K. The handshake must fail (so the client retries) and the sink must
+        // not see any records from that page.
+        var staleKey = await GetCollectorStaticKeyAsync();
+        var page = BuildPage(staleKey, Record("fill_assist_rule_outcome", AcceptedFields));
+
+        _services.GetRequiredService<NoiseStaticKey>().Rotate();
+
+        using var response = await PostTelemetryAsync(page);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(PageFormat.ResponseLength, (await response.Content.ReadAsByteArrayAsync()).Length);
+
+        var flusher = _services.GetServices<IHostedService>().OfType<BatchFlusher>().Single();
+        await flusher.FlushOnceAsync(CancellationToken.None);
+        Assert.Empty(_sink.Batches);
+    }
+
+    private static byte[] GetNoisePubFromToken(string token)
+    {
+        var payload = DecodeSegment(token, 1);
+        return Convert.FromBase64String(payload.GetProperty("x-ms-runtime").GetProperty("noise_pub").GetString()!);
     }
 
     [Fact]

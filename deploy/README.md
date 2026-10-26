@@ -91,7 +91,8 @@ az deployment group create -g vat-playground1 \
   -p blobStorageContainer=telemetry \
   -p telemetryBufferCapacity=1024 \
   -p telemetryTargetChunkRecords=512 \
-  -p telemetryTailMaxDelay=00:00:30
+  -p telemetryTailMaxDelay=00:00:30 \
+  -p noiseKeyRotationInterval=0.01:00:00
 
 az container show -g vat-playground1 -n telemetee-collector --query 'instanceView.state' -o tsv
 az container logs -g vat-playground1 -n telemetee-collector --container-name collector
@@ -161,17 +162,7 @@ Two rules follow:
   value cannot change what the collector does with user data: a credential for an untrusted sink
   qualifies; endpoints, environment names, and behavioural settings do not and stay literal.
 
-`deploy/allowed-wildcards.txt` is the reviewed list of accepted non-literal rules. Milestone 2
-added five:
-
-- `BlobStorageSink__ConnectionString=.+` and `BlobStorageSink__Container=.+` — the
-  operator chooses the destination storage account and container. The sink is outside the privacy
-  trust boundary; neither value can change what the collector does with user data.
-- `BlobStorageSink__TargetChunkRecords=.+` and `BlobStorageSink__TailMaxDelay=.+` — sink tuning
-  for blob granularity and tail flush latency. Both only affect how already-anonymized output is
-  batched into blobs, not what the collector does with user data.
-- `TelemetryIngestion__BufferCapacity=.+` — cap on in-memory records between flushes. Changes drop
-  rate under load but does not alter the anonymization applied to any retained record.
+`deploy/allowed-wildcards.txt` is the reviewed list of accepted non-literal rules.
 
 ## Diagnostic lockdown
 

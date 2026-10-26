@@ -28,6 +28,20 @@ content is already processed under the anonymization rules.
 
 See [batching-and-sink.md § Metrics](batching-and-sink.md#metrics) for the metric set.
 
+## Why Noise static key rotation is a hard swap
+
+The collector rotates its Noise static key on a time cadence so each key's lifetime is a
+declared property. The alternative to a hard swap is a grace period: keep accepting pages
+encrypted to the previous key for some window after rotation, to spare clients a retry.
+
+The grace period is rejected because it widens the blast radius of a leaked Noise private key.
+The 15-minute floor on the rotation interval exists to keep an operator misconfiguration from
+hammering the attestation sidecar; the 7-day ceiling keeps the exposure window bounded even
+when operators prefer a conservative value.
+
+See [architecture.md § Noise static key rotation](architecture.md#noise-static-key-rotation)
+for the request-path behavior.
+
 ## Why .NET diagnostics are off in Production
 
 Confidential ACI runs the collector inside a utility VM whose memory SEV-SNP encrypts from

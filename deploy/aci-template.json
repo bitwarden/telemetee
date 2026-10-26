@@ -53,6 +53,12 @@
         "description": "TimeSpan (hh:mm:ss) a cached partial chunk waits before the sink force-pushes it."
       }
     },
+    "noiseKeyRotationInterval": {
+      "type": "string",
+      "metadata": {
+        "description": "TimeSpan (d.hh:mm:ss) between Noise static key rotations. Must be between 15 minutes and 7 days; the collector refuses to start outside that range."
+      }
+    },
     "registryServer": {
       "type": "string",
       "defaultValue": "",
@@ -154,6 +160,10 @@
                 {
                   "name": "BlobStorageSink__TailMaxDelay",
                   "value": "[parameters('telemetryTailMaxDelay')]"
+                },
+                {
+                  "name": "NoiseChannel__KeyRotationInterval",
+                  "value": "[parameters('noiseKeyRotationInterval')]"
                 }
               ],
               "resources": {

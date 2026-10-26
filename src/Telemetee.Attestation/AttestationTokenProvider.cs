@@ -1,4 +1,4 @@
-﻿using System.Buffers.Text;
+using System.Buffers.Text;
 using System.Text.Json;
 using Bit.Telemetee.NoiseChannel;
 using Microsoft.Extensions.Options;
@@ -6,25 +6,29 @@ using Microsoft.Extensions.Options;
 namespace Bit.Telemetee.Attestation;
 
 /// <summary>
-/// Serves the current token for this process's Noise static key, refreshing it ahead of expiry. The
-/// runtime data is fixed for the process lifetime because the key is.
+/// Serves the MAA token bound to a caller-supplied <see cref="ScopedNoiseKey"/>. Refreshes ahead
+/// of the token's expiry and also whenever the caller presents a different public key than the
+/// cached token was minted for, so the token handed out always binds to the key the caller is
+/// about to use.
 /// </summary>
 internal sealed class AttestationTokenProvider(
     IAttestationTokenSource source,
-    INoiseStaticKey staticKey,
     IOptions<AttestationSettings> settings,
     TimeProvider timeProvider,
     AttestationMetrics metrics) : IDisposable
 {
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
-    private readonly byte[] _runtimeData = JsonSerializer.SerializeToUtf8Bytes(
-        new RuntimeData(Convert.ToBase64String(staticKey.PublicKey.Span)));
     private string? _token;
     private DateTimeOffset _refreshAt;
+    private byte[]? _tokenPublicKey;
 
-    public async Task<string> GetTokenAsync(CancellationToken cancellationToken)
+    public async Task<string> GetTokenAsync(ScopedNoiseKey scopedKey, CancellationToken cancellationToken)
     {
-        if (_token is not null && timeProvider.GetUtcNow() < _refreshAt)
+        var publicKey = scopedKey.PublicKey;
+        if (_token is not null
+            && timeProvider.GetUtcNow() < _refreshAt
+            && _tokenPublicKey is not null
+            && publicKey.Span.SequenceEqual(_tokenPublicKey))
         {
             return _token;
         }
@@ -32,15 +36,21 @@ internal sealed class AttestationTokenProvider(
         await _refreshLock.WaitAsync(cancellationToken);
         try
         {
-            if (_token is not null && timeProvider.GetUtcNow() < _refreshAt)
+            if (_token is not null
+                && timeProvider.GetUtcNow() < _refreshAt
+                && _tokenPublicKey is not null
+                && publicKey.Span.SequenceEqual(_tokenPublicKey))
             {
                 return _token;
             }
 
+            var runtimeData = JsonSerializer.SerializeToUtf8Bytes(
+                new RuntimeData(Convert.ToBase64String(publicKey.Span)));
+
             string token;
             try
             {
-                token = await source.GetTokenAsync(_runtimeData, cancellationToken);
+                token = await source.GetTokenAsync(runtimeData, cancellationToken);
                 _refreshAt = ReadExpiry(token) - settings.Value.RefreshMargin;
             }
             catch
@@ -51,6 +61,7 @@ internal sealed class AttestationTokenProvider(
 
             metrics.Refreshed();
             _token = token;
+            _tokenPublicKey = publicKey.ToArray();
             return token;
         }
         finally

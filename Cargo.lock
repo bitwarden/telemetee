@@ -2273,6 +2273,7 @@ dependencies = [
  "snow",
  "telemetee-api",
  "thiserror",
+ "tokio",
  "url",
  "x509-parser",
 ]

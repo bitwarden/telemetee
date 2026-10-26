@@ -68,6 +68,12 @@ impl CollectorClient {
     /// more fixed-size pages, encrypts each under the collector's attested Noise static key, and
     /// POSTs them. Attestation runs once per call. An empty queue is a no-op.
     ///
+    /// The collector rotates its Noise static key on a time cadence, so a page's attested key can
+    /// become stale between attestation and POST. The handshake fails on the stale key; this
+    /// method absorbs that by re-attesting and retrying any page that fails the handshake. Each
+    /// page gets at most one retry; subsequent pages inherit the fresh attestation, so a slow
+    /// upload that spans several rotations still completes.
+    ///
     /// `queue` is treated as a work queue: on return it contains exactly the records that did
     /// **not** reach the wire, at the front, in their original order.
     ///
@@ -87,7 +93,7 @@ impl CollectorClient {
             });
         }
 
-        let attestation = self.attestation().await?;
+        let mut attestation = self.attestation().await?;
 
         let mut oversize_dropped: Vec<Submission> = Vec::new();
         let mut packed: Vec<([u8; PLAINTEXT_LENGTH], Vec<Submission>)> = Vec::new();
@@ -118,7 +124,14 @@ impl CollectorClient {
         let mut iter = packed.into_iter();
         while let Some((bytes, subs)) = iter.next() {
             let count = subs.len();
-            if let Err(cause) = self.send_one_page(&attestation, &bytes).await {
+            let mut result = self.send_one_page(&attestation, &bytes).await;
+            if matches!(result, Err(Error::Noise(_))) {
+                // The collector rotated its key between our attestation fetch and this POST.
+                // Re-attest and retry this page; subsequent pages inherit the fresh attestation.
+                attestation = self.attestation().await?;
+                result = self.send_one_page(&attestation, &bytes).await;
+            }
+            if let Err(cause) = result {
                 let mut leftover = subs;
                 for (_, more) in iter {
                     leftover.extend(more);

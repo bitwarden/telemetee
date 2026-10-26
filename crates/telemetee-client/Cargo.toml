@@ -21,5 +21,8 @@ thiserror = { workspace = true }
 url = { workspace = true }
 x509-parser = { workspace = true }
 
+[dev-dependencies]
+tokio = { workspace = true }
+
 [lints]
 workspace = true

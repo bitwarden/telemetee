@@ -32,6 +32,17 @@ collector returns 81 bytes of random noise so the shape matches the success path
 Per-record outcomes live only in the collector's `telemetee.batch.records_accepted` and
 `telemetee.batch.records_dropped` counters, not communicated to the client in any way.
 
+## Noise static key rotation
+
+The collector rotates its Noise static key on `NoiseChannel:KeyRotationInterval` (default
+24 hours, bounded to 15 minutes–7 days). The attestation endpoint always serves a token bound
+to the current key, so the key's useful lifetime equals the rotation interval.
+
+A rotation can land between a client's attestation fetch and its POST, which encrypts to a key
+the responder no longer holds. The handshake fails and the collector returns the usual 81
+bytes of garbage. The client treats that as a key-mismatch and retries any failing page once
+after re-attesting; subsequent pages inherit the fresh attestation.
+
 ## Plaintext page layout
 
 The plaintext page is `uint16-BE body_length || CBOR body || 0x00 padding`. The CBOR body is a

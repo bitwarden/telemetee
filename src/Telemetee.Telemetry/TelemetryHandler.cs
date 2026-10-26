@@ -16,18 +16,18 @@ namespace Bit.Telemetee.Telemetry;
 /// </summary>
 internal sealed class TelemetryHandler
 {
-    private readonly NoiseStaticKey _staticKey;
+    private readonly KeyPair _staticKey;
     private readonly SchemaApplier _applier;
     private readonly BatchBuffer _buffer;
     private readonly TelemetryMetrics _metrics;
 
     public TelemetryHandler(
-        NoiseStaticKey staticKey,
+        ScopedNoiseKey staticKey,
         SchemaApplier applier,
         BatchBuffer buffer,
         TelemetryMetrics metrics)
     {
-        _staticKey = staticKey;
+        _staticKey = staticKey.KeyPair;
         _applier = applier;
         _buffer = buffer;
         _metrics = metrics;
@@ -35,7 +35,7 @@ internal sealed class TelemetryHandler
 
     public byte[] HandlePage(ReadOnlySpan<byte> page)
     {
-        using var responder = new NoiseNkResponder(_staticKey.KeyPair);
+        using var responder = new NoiseNkResponder(_staticKey);
         byte[] plaintext;
         try
         {
