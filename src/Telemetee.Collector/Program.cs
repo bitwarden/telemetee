@@ -8,6 +8,12 @@ using Bit.Telemetee.Telemetry.Sink;
 var builder = WebApplication.CreateBuilder(args);
 builder.UseBitwardenSdk();
 
+if (!builder.Environment.IsDevelopment())
+{
+    using var earlyLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+    DiagnosticsLockdown.AssertDisabled(earlyLoggerFactory.CreateLogger(typeof(DiagnosticsLockdown)));
+}
+
 builder.Services.AddOpenApi(options => options.UseTelemetryRecordPolymorphism());
 builder.Services.AddHealthChecks();
 builder.Services.AddCollectorMetrics(builder.Configuration, builder.Environment);

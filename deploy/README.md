@@ -173,6 +173,13 @@ added five:
 - `TelemetryIngestion__BufferCapacity=.+` — cap on in-memory records between flushes. Changes drop
   rate under load but does not alter the anonymization applied to any retained record.
 
+## Diagnostic lockdown
+
+The ACI template pins the `DOTNET_EnableDiagnostics*` env vars to literal `0` values. The collector
+refuses to start if the lockdown did not take. See
+[decisions.md § Why .NET diagnostics are off in Production](../docs/decisions.md#why-net-diagnostics-are-off-in-production) for the threat model and `DiagnosticsLockdown` in the
+collector for what the startup check covers.
+
 ## Auditing a release
 
 Everything the hostdata depends on is in the repository at the release tag, so an outsider can

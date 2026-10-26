@@ -17,5 +17,11 @@ WORKDIR /app
 COPY --from=build /app .
 # 8080 is taken by the attestation sidecar, which shares the container group's network namespace.
 ENV ASPNETCORE_HTTP_PORTS=5000
+# Disable .NET diagnostics before the runtime starts; the ACI template pins the same values in
+# the CCE policy. See docs/decisions.md § Why .NET diagnostics are off in Production.
+ENV DOTNET_EnableDiagnostics=0
+ENV DOTNET_EnableDiagnostics_IPC=0
+ENV DOTNET_EnableDiagnostics_Debugger=0
+ENV DOTNET_EnableDiagnostics_Profiler=0
 EXPOSE 5000
 ENTRYPOINT ["dotnet", "Telemetee.Collector.dll"]

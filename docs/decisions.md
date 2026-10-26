@@ -28,6 +28,13 @@ content is already processed under the anonymization rules.
 
 See [batching-and-sink.md § Metrics](batching-and-sink.md#metrics) for the metric set.
 
+## Why .NET diagnostics are off in Production
+
+Confidential ACI runs the collector inside a utility VM whose memory SEV-SNP encrypts from
+the physical host, and the CCE policy pins the containers and the env vars that start them
+inside that UVM. Enabling .NET diagnostics would mean changing an env var and would be
+detectable. The subsystem is still off as belt-and-suspenders isolation guarantee.
+
 ## Why the Parquet contract is tested against Azurite, not a mocked BlobClient
 
 The sink dispatches to `ParquetSerializer.SerializeAsync<T>` through a reflection-built generic

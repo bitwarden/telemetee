@@ -112,6 +112,22 @@
                   "value": "5000"
                 },
                 {
+                  "name": "DOTNET_EnableDiagnostics",
+                  "value": "0"
+                },
+                {
+                  "name": "DOTNET_EnableDiagnostics_IPC",
+                  "value": "0"
+                },
+                {
+                  "name": "DOTNET_EnableDiagnostics_Debugger",
+                  "value": "0"
+                },
+                {
+                  "name": "DOTNET_EnableDiagnostics_Profiler",
+                  "value": "0"
+                },
+                {
                   "name": "Attestation__SidecarUrl",
                   "value": "http://localhost:8080"
                 },
