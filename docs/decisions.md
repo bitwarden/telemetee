@@ -27,3 +27,19 @@ Logs are fine on the sink side (`ITelemetrySink` post failures, flush exceptions
 content is already processed under the anonymization rules.
 
 See [batching-and-sink.md § Metrics](batching-and-sink.md#metrics) for the metric set.
+
+## Why the Parquet contract is tested against Azurite, not a mocked BlobClient
+
+The sink dispatches to `ParquetSerializer.SerializeAsync<T>` through a reflection-built generic
+delegate, and the output lands via `BlobContainerClient.UploadAsync`. A mock of the Blob SDK
+could verify the sink called upload with the right path and content-type, but it cannot catch
+the failure modes that matter here:
+
+- A newly added `Sink` property whose CLR type Parquet.Net cannot serialize fails only inside
+  the generic dispatch, under the real serializer.
+- The on-disk Parquet shape per schema (column list, order, nullability, timestamp
+  `isAdjustedToUtc` flag) is the Data Services contract. Golden files only match reality if a
+  real Parquet writer produces them.
+
+The `Telemetee.Telemetry.IntegrationTest` project boots Azurite through Testcontainers for both
+reasons — see [batching-and-sink.md § Parquet contract](batching-and-sink.md#parquet-contract).

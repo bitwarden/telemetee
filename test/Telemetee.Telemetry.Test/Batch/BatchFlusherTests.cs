@@ -33,7 +33,7 @@ public class BatchFlusherTests
         var batch = Assert.Single(env.Sink.Batches);
         Assert.Equal(now, batch.Time);
         Assert.Equal(2, batch.Records.Count);
-        Assert.All(batch.Records, r => Assert.Equal(now, r.BatchTime));
+        Assert.All(batch.Records, r => Assert.Equal(now.UtcDateTime, r.BatchTime));
         Assert.Equal([0L, 1L], batch.Records.Select(r => r.Seq));
     }
 

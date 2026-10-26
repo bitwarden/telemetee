@@ -1,0 +1,10 @@
+# PARQUET CONTRACT — Data Services
+# This file documents the exact Parquet shape telemetee emits for this schema.
+# A diff here means the on-disk layout has changed. Before updating this file,
+# notify the Data Services team — their ingestion jobs read this exact layout.
+# Regenerate: TELEMETEE_UPDATE_GOLDENS=1 dotnet test
+# See docs/batching-and-sink.md § Parquet contract.
+
+# RuleId | Success | Domain | ClientVersionMajor | BatchTime | Seq
+r-fill-login | true | example.com | 2025 | 2026-10-20T12:00:00.000Z | 0
+r-fill-card | false | shop.example | 2026+ | 2026-10-20T12:00:00.000Z | 1

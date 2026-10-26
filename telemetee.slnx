@@ -9,6 +9,7 @@
     <Project Path="test/Telemetee.Attestation.Test/Telemetee.Attestation.Test.csproj" />
     <Project Path="test/Telemetee.Collector.IntegrationTest/Telemetee.Collector.IntegrationTest.csproj" />
     <Project Path="test/Telemetee.NoiseChannel.Test/Telemetee.NoiseChannel.Test.csproj" />
+    <Project Path="test/Telemetee.Telemetry.IntegrationTest/Telemetee.Telemetry.IntegrationTest.csproj" />
     <Project Path="test/Telemetee.Telemetry.Test/Telemetee.Telemetry.Test.csproj" />
   </Folder>
 </Solution>

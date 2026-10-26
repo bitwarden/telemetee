@@ -66,7 +66,7 @@ internal sealed class BlobStorageSink : ITelemetrySink
         // a quiet schema does not starve. Both passes feed the same uploader; a chunk that fails
         // to serialize or upload is counted as lost but does not stop the remaining chunks.
         var fresh = PrepareChunks(records, _settings.TargetChunkRecords);
-        var aged = CollectAgedTails(batchTime, _settings.TailMaxDelay);
+        var aged = CollectAgedTails(batchTime.UtcDateTime, _settings.TailMaxDelay);
 
         var freshOutcome = await EmitChunksAsync(container, fresh, cancellationToken);
         var agedOutcome = await EmitChunksAsync(container, aged, cancellationToken);
@@ -117,7 +117,7 @@ internal sealed class BlobStorageSink : ITelemetrySink
     /// <paramref name="now"/> - <paramref name="maxDelay"/>, removing them from the cache.
     /// </summary>
     internal List<(Type SinkType, IReadOnlyList<TelemetrySinkRecord> Chunk)> CollectAgedTails(
-        DateTimeOffset now,
+        DateTime now,
         TimeSpan maxDelay)
     {
         var threshold = now - maxDelay;

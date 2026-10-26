@@ -43,6 +43,10 @@ Required tools:
 - Rust `1.97.1`, edition 2024 (pinned in [Cargo.toml](Cargo.toml)).
 - `sdk-internal` checked out as a sibling of this repo (`../sdk-internal`). The Rust
   workspace path-depends on `bitwarden-random` from it.
+- Docker, for the `Telemetee.Telemetry.IntegrationTest` suite. That project spins up an
+  Azurite container through Testcontainers to verify the Parquet contract with Data
+  Services. Without Docker, `dotnet test telemetee.slnx` fails in that project; run
+  `dotnet test` on the other test projects individually to skip it.
 
 Build and test:
 

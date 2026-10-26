@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Telemetee.Telemetry.Test" />
+    <InternalsVisibleTo Include="Telemetee.Telemetry.IntegrationTest" />
     <InternalsVisibleTo Include="Telemetee.Collector.IntegrationTest" />
   </ItemGroup>
 

@@ -30,6 +30,24 @@ ages past `TailMaxDelay`. The Parquet schema per blob is derived from the sink t
 declared properties, so every blob of a given schema has the same columns in the same order
 with no cross-batch inference.
 
+## Parquet contract
+
+The on-disk Parquet shape per schema is a contract with Bitwarden's Data Services team. Their
+ingestion jobs read these layouts verbatim, so a shape change needs their sign-off before it
+lands.
+
+The contract is enforced by [`test/Telemetee.Telemetry.IntegrationTest`][itest], which pushes
+hand-picked records through `BlobStorageSink` into an Azurite container and compares the
+emitted Parquet's schema and rows against committed goldens under `test/Telemetee.Telemetry.IntegrationTest/Golden/`.
+If the shape changes, the goldens diff and the test fails loudly with instructions to notify
+Data Services. To regenerate after an approved change:
+
+```sh
+TELEMETEE_UPDATE_GOLDENS=1 dotnet test test/Telemetee.Telemetry.IntegrationTest
+```
+
+[itest]: ../test/Telemetee.Telemetry.IntegrationTest/
+
 ## Settings
 
 The pipeline splits settings along the privacy boundary.

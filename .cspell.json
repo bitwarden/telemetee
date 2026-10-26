@@ -8,6 +8,7 @@
     "Cdsv",
     "Cesv",
     "clippy",
+    "goldens",
     "HMAC",
     "jsonwebtoken",
     "pseudonymization",
@@ -16,6 +17,7 @@
     "pseudonymizing",
     "reqwest",
     "serde",
+    "slnx",
     "telemetee",
     "thiserror"
   ],

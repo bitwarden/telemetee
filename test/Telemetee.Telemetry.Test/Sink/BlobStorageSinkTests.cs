@@ -9,9 +9,9 @@ namespace Bit.Telemetee.Telemetry.Test.Sink;
 
 public class BlobStorageSinkTests
 {
-    private static readonly DateTimeOffset FlushA = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset FlushB = FlushA.AddSeconds(30);
-    private static readonly DateTimeOffset FlushC = FlushA.AddSeconds(60);
+    private static readonly DateTime FlushA = new(2026, 10, 20, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime FlushB = FlushA.AddSeconds(30);
+    private static readonly DateTime FlushC = FlushA.AddSeconds(60);
 
     [Fact]
     public void PrepareChunks_WithNoCachedTail_EmitsFullChunks_AndStashesPartial()
@@ -115,7 +115,7 @@ public class BlobStorageSinkTests
             NullLogger<BlobStorageSink>.Instance);
     }
 
-    private static List<TelemetrySinkRecord> Many<TSink>(int count, DateTimeOffset batchTime, int seqStart = 0)
+    private static List<TelemetrySinkRecord> Many<TSink>(int count, DateTime batchTime, int seqStart = 0)
         where TSink : TelemetrySinkRecord =>
         [.. Enumerable.Range(0, count).Select(i =>
         {
@@ -127,8 +127,11 @@ public class BlobStorageSinkTests
 
     /// <summary>
     /// Instantiates a Sink via reflection, bypassing the <c>required</c>-member compile check.
-    /// Properties are left at CLR defaults; the chunking/tail-sweep tests exercise paths that only
-    /// read <c>BatchTime</c>, <c>Seq</c>, and <c>GetType()</c>, so field values are immaterial.
+    /// Properties are left at CLR defaults; the chunking/tail-sweep tests here only read
+    /// <c>BatchTime</c>, <c>Seq</c>, and <c>GetType()</c>, so field values do not affect the
+    /// outcome. The Parquet serialization contract that cares about field values lives in
+    /// <c>Telemetee.Telemetry.IntegrationTest</c>, which exercises the real Blob SDK path against
+    /// Azurite.
     /// </summary>
     private static T CreateDefault<T>() where T : TelemetrySinkRecord =>
         (T)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(T));

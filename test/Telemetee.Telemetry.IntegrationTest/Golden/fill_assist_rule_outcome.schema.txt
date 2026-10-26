@@ -1,0 +1,14 @@
+# PARQUET CONTRACT — Data Services
+# This file documents the exact Parquet shape telemetee emits for this schema.
+# A diff here means the on-disk layout has changed. Before updating this file,
+# notify the Data Services team — their ingestion jobs read this exact layout.
+# Regenerate: TELEMETEE_UPDATE_GOLDENS=1 dotnet test
+# See docs/batching-and-sink.md § Parquet contract.
+
+# column | clr_type | nullable
+RuleId | System.ReadOnlyMemory`1[[System.Char, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]] | True
+Success | System.Boolean | False
+Domain | System.ReadOnlyMemory`1[[System.Char, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]] | True
+ClientVersionMajor | System.ReadOnlyMemory`1[[System.Char, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]] | True
+BatchTime | System.DateTime | True
+Seq | System.Int64 | True

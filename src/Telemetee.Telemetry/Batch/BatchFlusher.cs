@@ -67,7 +67,7 @@ internal sealed class BatchFlusher : BackgroundService
         for (var seq = 0L; seq < records.Count; seq++)
         {
             var record = records[(int)seq];
-            record.BatchTime = batchTime;
+            record.BatchTime = batchTime.UtcDateTime;
             record.Seq = seq;
         }
         try
