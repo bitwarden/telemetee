@@ -13,18 +13,13 @@ namespace Bit.Telemetee.Telemetry.Pages;
 /// The CBOR body is a single map:
 /// <code>
 /// {
-///   "auths":  [&lt;jwt&gt;, ...],                       // deduped, insertion-ordered table
-///   "events": [
-///     [&lt;auth_idx&gt;, &lt;cbor-event&gt;],   // authed: 2-element array; index into "auths"
-///     [&lt;cbor-event&gt;],                 // unauthed: 1-element array
-///     ...
-///   ]
+///   "events": [&lt;cbor-event&gt;, ...]
 /// }
 /// </code>
 /// Each <c>cbor-event</c> is a CBOR map with a <c>schema</c> discriminator and the schema's
 /// fields. <c>events</c> is in strict submission order so a downstream reader sees records in the
-/// same order the client produced them. Deduping JWTs through <c>auths</c> keeps the ~700-byte
-/// token overhead out of each record when a user emits several events on the same page.
+/// same order the client produced them. Keeping the body a map leaves room to add new entries
+/// later without a format version bump.
 /// </remarks>
 public static class PageFormat
 {

@@ -19,16 +19,7 @@ Available treatments on an input property:
 | ------------------ | ------------------------------------------------------------------------------------------------- |
 | `[Keep]`           | Passes the value through verbatim. The sink property matches the input CLR type.                  |
 | `[Bucket(nameof)]` | Replaces the value with the label the bucketer returns. Records off the end drop. Sink is string. |
-| `[Pseudonymize]`   | HMAC-SHA256s the value under the per-boot salt. Sink is a hex string.                             |
-| `[Authed(claim)]`  | Verifies the value against the named JWT claim, then pseudonymizes it. Sink is a hex string.      |
-
-A schema is authed if it declares any `[Authed]` field. Its records are only accepted inside
-an authed group on the page. For each `[Authed]` field, the client sends the plaintext value
-it asserts. If that value does not equal the named JWT claim, the collector rejects the record
-as `claim_mismatch`. Otherwise it HMAC-pseudonymizes the value under the per-boot salt before
-anything reaches the sink. The client sends the value instead of the server populating it from
-the claim so that a drifted session (stale token, swapped login) surfaces as `claim_mismatch`
-instead of being silently overwritten.
+| `[Pseudonymize]`   | HMAC-SHA256s the value under the pseudonym salt. Sink is a hex string.                            |
 
 Input property types are `string`, `bool`, `int`, `long`, `float`, `double`. Nested objects
 and arrays are not supported today, so a schema that needs structure flattens it client-side.
@@ -36,6 +27,23 @@ Input properties map PascalCase → snake_case on the wire.
 
 The attested image guarantees that records reach storage only after they pass through one of
 these declared sink shapes, and that each schema's retention is what this build declares.
+
+## Flow correlation
+
+Cross-event correlation within one flow is a property each schema declares explicitly. The
+intended primitive is a client-generated `flow_id` plus a `flow_kind` that names the product
+intent the id spans.
+The client holds the id for the life of the intent.
+
+- `flow_kind` is `[Keep]`. It is a closed set of named intents known to the collector.
+  Reviewers reason about a whole flow kind as a unit. Analyzing which events it emits, which
+  fields are allowed, how much the sequence through its steps could fingerprint a user.
+- `flow_id` is `[Pseudonymize]`. Server-side HMAC makes the correlation token one-way at the
+  collector such that a client-state leak alone cannot be joined back to collected data.
+  Within-flow correlation is intact because the same raw id always pseudonymizes to the same
+  output under one salt.
+
+Pseudonymize on anything other than `flow_id` is a red flag — see the discussion below.
 
 ## Adding a telemetry type
 
@@ -61,8 +69,8 @@ cap. The reason tag is on `telemetee.batch.records_dropped`.
 ## Reviewing a new schema
 
 Every new schema should pass two checks before merge: whether batch_time anonymizes it, and
-how much each retained field could reveal about an individual. Pseudonymized and authed
-schemas get a stricter version of both.
+how much each retained field could reveal about an individual. Schemas that carry a flow get a
+third check on sequence fingerprinting across the flow.
 
 ### Does batch_time anonymize this schema?
 
@@ -108,28 +116,34 @@ Sweeney's result that ZIP + date-of-birth + sex pins down ~87% of the US populat
 of the same math. To deal with these kind of fields that have many possible values, prefer
 bucket to keep and omit to bucket.
 
-### Pseudonymized and authed schemas
+### Flows: review as a unit, not per row
 
-The salt is per-process and per-instance, so a pseudonym only lets a reader correlate events
-from within one boot. For most schemas, omitting the identifier field from the POCO is
-strictly better than `[Pseudonymize]`.
+When a schema carries `flow_id`, the three field questions apply across the whole flow, not
+just one row. All events sharing a `flow_id` form one sequence; the attacker's view is the
+full ordered trace of that intent, not a single record. Evaluate the schema against the
+flow's expected shape:
 
-`[Authed]` is the discipline for a schema that genuinely needs a verified identifier. The
-collector checks the client-asserted value against the JWT claim before pseudonymizing. The
-client cannot pick the identity unilaterally, and the sink cannot back-map the pseudonym to
-the plaintext.
+- **Sequence fingerprinting.** For a complex `flow_kind` (SSO setup is the usual example),
+  the path through the knobs — provider choice, cert type, SCIM on/off, test outcomes, retry
+  pattern — is a fingerprint even when no individual field looks dangerous. Count the
+  value-combinations across the flow, not within one event. If the product can run into the
+  thousands, the sequence re-identifies the user regardless of how opaque the id is.
+- **Length of the intent.** A long-lived flow (days or weeks) accumulates more sequence
+  entropy than a short one. If an intent is naturally long but the correlation window should
+  be shorter, split it into multiple shorter flows at product boundaries with no linkage
+  between them.
+- **Flow-id handling.** `flow_id` is `[Pseudonymize]`. Treating it any other way defeats the
+  one-way property that lets client-state leaks and sink leaks remain uncorrelatable without
+  the salt.
 
-A `[Pseudonymize]` or `[Authed]` field groups every event one entity emits during the
-collector's boot. That changes how the three field questions apply. The attacker evaluates
-them against the pseudonym's full accumulated graph rather than against a single row. **One
-joinable field anywhere in that graph names the entity and unlocks all of it.**
+### Pseudonymize outside of flow_id
 
-The join-to-production check therefore becomes a hard no for pseudonymized schemas — not
-"narrow enough" but "not present at all." The value-combination bound applies across the
-pseudonym's lifetime of events rather than one flush window. A boolean plus a coarse
-categorical plus a bucketed numeric can pin a pseudonym down over a boot, even if each flush
-window alone looks safe. The pseudonym itself does not enter the combination product; it is
-the identity being protected, not a value that discriminates among candidates.
+`[Pseudonymize]` on any field other than `flow_id` needs a justification during review.
+Omitting an identifier field from the POCO is strictly better than pseudonymizing it — an
+undeclared field never crosses the trust boundary at all, while a pseudonymized one enables
+within-salt correlation that the collector's design otherwise forbids. The join-to-production
+check becomes a hard no for any pseudonymized field: one joinable field anywhere in the graph
+names the entity and unlocks all events sharing the pseudonym.
 
-Pseudonymization is HMAC-SHA256 under a 32-byte salt drawn once at boot. The salt lives in
-memory only and is lost on restart.
+Pseudonymization is HMAC-SHA256 under a 32-byte salt. The salt lives in collector memory and
+rotates on process restart.

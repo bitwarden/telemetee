@@ -20,7 +20,7 @@ public class SchemaApplierTests
     [Fact]
     public void KeptFields_PassThroughVerbatim()
     {
-        var result = _applier.ApplyUnauthed(Encode("fill_assist_rule_outcome", new
+        var result = _applier.Apply(Encode("fill_assist_rule_outcome", new
         {
             rule_id = "r1",
             success = true,
@@ -40,20 +40,20 @@ public class SchemaApplierTests
         var descriptor = SchemaBuilder.FromType(typeof(PseudoFixture));
         var applier = new SchemaApplier(new SchemaCatalog([descriptor]), _saltFactory);
 
-        var first = applier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
-        var second = applier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        var first = applier.Apply(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        var second = applier.Apply(Encode("pseudo_fixture", new { id = "same" })).Record!;
         Assert.Equal(((PseudoFixture.Sink)first).Id, ((PseudoFixture.Sink)second).Id);
 
         using var otherFactory = new PseudonymSaltFactory();
         var otherApplier = new SchemaApplier(new SchemaCatalog([descriptor]), otherFactory);
-        var afterRestart = otherApplier.ApplyUnauthed(Encode("pseudo_fixture", new { id = "same" })).Record!;
+        var afterRestart = otherApplier.Apply(Encode("pseudo_fixture", new { id = "same" })).Record!;
         Assert.NotEqual(((PseudoFixture.Sink)first).Id, ((PseudoFixture.Sink)afterRestart).Id);
     }
 
     [Fact]
     public void BucketedField_IsReplacedByItsLabel()
     {
-        var result = _applier.ApplyUnauthed(SampleFillAssistRecord(clientVersionMajor: 2023));
+        var result = _applier.Apply(SampleFillAssistRecord(clientVersionMajor: 2023));
         var sink = Assert.IsType<FillAssistRuleOutcome.Sink>(result.Record);
         Assert.Equal("<2024", sink.ClientVersionMajor);
     }
@@ -61,7 +61,7 @@ public class SchemaApplierTests
     [Fact]
     public void UnknownSchema_IsDropped()
     {
-        var result = _applier.ApplyUnauthed(Encode("ghost_schema", new { x = 1 }));
+        var result = _applier.Apply(Encode("ghost_schema", new { x = 1 }));
         Assert.False(result.IsOk);
         Assert.Equal(DropReason.UnknownSchema, result.Reason);
     }
@@ -69,7 +69,7 @@ public class SchemaApplierTests
     [Fact]
     public void UndeclaredField_IsSilentlyDropped_RecordStillKept()
     {
-        var result = _applier.ApplyUnauthed(Encode("fill_assist_rule_outcome", new
+        var result = _applier.Apply(Encode("fill_assist_rule_outcome", new
         {
             rule_id = "r",
             success = true,
@@ -88,7 +88,7 @@ public class SchemaApplierTests
         // The compiled process requires every declared input field to be present. A record that
         // omits one is malformed — the old behavior (quietly accept partial records) is gone, since
         // the typed sink has required properties that must all be set.
-        var result = _applier.ApplyUnauthed(Encode("fill_assist_rule_outcome", new
+        var result = _applier.Apply(Encode("fill_assist_rule_outcome", new
         {
             rule_id = "r",
             // success, domain, client_version_major missing
@@ -112,7 +112,7 @@ public class SchemaApplierTests
     public void MalformedJson_IsDropped()
     {
         var bytes = Encoding.UTF8.GetBytes("{\"schema\": \"fill_assist_rule_outcome\",");
-        var result = _applier.ApplyUnauthed(bytes);
+        var result = _applier.Apply(bytes);
         Assert.False(result.IsOk);
         Assert.Equal(DropReason.MalformedJson, result.Reason);
     }
@@ -121,7 +121,7 @@ public class SchemaApplierTests
     public void MissingSchemaProperty_IsMalformed()
     {
         var bytes = Encoding.UTF8.GetBytes("{\"rule_id\": \"r\"}");
-        var result = _applier.ApplyUnauthed(bytes);
+        var result = _applier.Apply(bytes);
         Assert.False(result.IsOk);
         Assert.Equal(DropReason.MalformedRecord, result.Reason);
     }

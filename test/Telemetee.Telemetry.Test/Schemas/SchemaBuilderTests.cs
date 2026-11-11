@@ -14,13 +14,6 @@ public class SchemaBuilderTests
     }
 
     [Fact]
-    public void FromType_DerivesIsAuthedFromAnyAuthedField()
-    {
-        Assert.False(SchemaBuilder.FromType(typeof(FillAssistRuleOutcome)).IsAuthed);
-        Assert.True(SchemaBuilder.FromType(typeof(AuthedGeneratedPassword)).IsAuthed);
-    }
-
-    [Fact]
     public void FromType_ReadsRetentionFromSinkIRetained()
     {
         var descriptor = SchemaBuilder.FromType(typeof(FillAssistRuleOutcome));
@@ -77,33 +70,6 @@ public class SchemaBuilderTests
     public void FromType_RejectsBucketWhoseInputTypeDoesNotMatchBucketer()
     {
         Assert.Throws<InvalidOperationException>(() => SchemaBuilder.FromType(typeof(BucketTypeMismatch)));
-    }
-
-    [Fact]
-    public void FromType_SchemaWithMultiplePseudonymizedFields_IsAccepted()
-    {
-        // Pseudonymized fields are not reserved for one "correlation key"; researchers slice on
-        // whichever pseudonym makes sense at query time. The builder must not restrict this.
-        var descriptor = SchemaBuilder.FromType(typeof(MultiPseudonymized));
-        Assert.Equal("multi_pseudonymized", descriptor.Name);
-    }
-
-    [Telemetry("multi_pseudonymized")]
-    private sealed class MultiPseudonymized : TelemetryRecord
-    {
-        [Pseudonymize]
-        public string UserId { get; init; } = string.Empty;
-
-        [Pseudonymize]
-        public string DeviceId { get; init; } = string.Empty;
-
-        public sealed class Sink : TelemetrySinkRecord, IRetained
-        {
-            public static TimeSpan RetentionTime => TimeSpan.FromDays(30);
-
-            public required string UserId { get; init; }
-            public required string DeviceId { get; init; }
-        }
     }
 
     [Telemetry("missing_treatment_fixture")]

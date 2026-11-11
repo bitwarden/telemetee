@@ -17,7 +17,6 @@ internal sealed class TelemetryMetrics
     private readonly Counter<long> _flushes;
     private readonly Histogram<long> _recordsPerFlush;
     private readonly Counter<long> _sinkFailures;
-    private readonly Counter<long> _authGroups;
     private readonly KeyValuePair<string, object?> _versionTag;
 
     public TelemetryMetrics(IMeterFactory meterFactory, string collectorVersion)
@@ -48,18 +47,7 @@ internal sealed class TelemetryMetrics
             "telemetee.batch.sink_failures",
             unit: "{record}",
             description: "Records the sink attempted but could not deliver.");
-        _authGroups = meter.CreateCounter<long>(
-            "telemetee.auth.groups",
-            unit: "{group}",
-            description: "Authed groups processed, by outcome.");
     }
-
-    /// <summary>
-    /// Called when an authed group's token was parsed but not signature-verified. Phase B replaces
-    /// this with concrete verify/reject outcomes.
-    /// </summary>
-    public void AuthGroupUnverified() =>
-        _authGroups.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "unverified"));
 
     public void PageAccepted() => _pages.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "accepted"));
     public void PageRejectedSize() => _pages.Add(1, _versionTag, new KeyValuePair<string, object?>("outcome", "rejected_size"));

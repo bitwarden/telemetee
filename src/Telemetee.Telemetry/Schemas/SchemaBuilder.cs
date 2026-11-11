@@ -11,15 +11,15 @@ namespace Bit.Telemetee.Telemetry.Schemas;
 /// POCO's attributes, resolves the nested <c>Sink</c>, and compiles a
 /// <see cref="ProcessFunc"/> whose body is a single <c>new Sink { ... }</c> initializer with one
 /// bound property per declared treatment.
-/// 
+///
 /// Validation is strict and fails at startup. Every schema must comply.
 /// <list type="bullet">
 /// <item>inherit from <see cref="TelemetryRecord"/></item>
 /// <item>nested <c>Sink</c> class for each Telemetry class</item>
 /// <item><c>Sink</c> inherits from <see cref="TelemetrySinkRecord"/></item>
 /// <item><c>Sink</c> has a parameterless constructor</item>
-/// <item>every input property declares a treatment attribute (<c>[Keep]</c>, <c>[Bucket]</c>,
-/// <c>[Pseudonymize]</c>, or <c>[Authed]</c>)</item>
+/// <item>every input property declares a treatment attribute (<c>[Keep]</c>, <c>[Bucket]</c>, or
+/// <c>[Pseudonymize]</c>)</item>
 /// <item>input properties do not collide on their snake_case wire names</item>
 /// <item>matching sink property for each input property</item>
 /// <item>type compatibility between attribute-marked record properties and their associated sink
@@ -65,12 +65,10 @@ internal static class SchemaBuilder
         var retention = ReadRetention(sinkType);
         var inputProperties = CollectInputProperties(inputType);
         var sinkProperties = CollectSinkProperties(sinkType);
-        var isAuthed = inputProperties.Any(f => f.Treatment is AuthedAttribute);
 
         var process = CompileProcess(inputType, sinkType, inputProperties, sinkProperties);
         return new SchemaDescriptor(
             schemaAttr.Name,
-            isAuthed,
             inputType,
             sinkType,
             retention,
@@ -111,7 +109,7 @@ internal static class SchemaBuilder
             {
                 throw new InvalidOperationException(
                     $"{inputType.FullName}.{property.Name} has no treatment attribute. Every property on a " +
-                    "telemetry schema must declare one of [Keep], [Bucket], [Pseudonymize], or [Authed].");
+                    "telemetry schema must declare one of [Keep], [Bucket], or [Pseudonymize].");
             }
             var wireName = JsonNamingPolicy.SnakeCaseLower.ConvertName(property.Name);
             if (byWireName.TryGetValue(wireName, out var earlier))
@@ -200,8 +198,6 @@ internal static class SchemaBuilder
             KeepAttribute => BuildKeepCall(inputType, inputProperty, sinkProperty, root, wireName),
             PseudonymizeAttribute => RequireStringToString(inputType, inputProperty, sinkProperty, "[Pseudonymize]",
                 Expression.Call(TreatmentsMethod(nameof(Treatments.PseudonymizeString)), root, wireName, context)),
-            AuthedAttribute authed => RequireStringToString(inputType, inputProperty, sinkProperty, "[Authed]",
-                Expression.Call(TreatmentsMethod(nameof(Treatments.Authed)), root, wireName, Expression.Constant(authed.JwtClaim), context)),
             BucketAttribute bucket => BuildBucketCall(inputType, inputProperty, sinkProperty, bucket, root, wireName),
             _ => throw new InvalidOperationException(
                 $"{inputType.FullName}.{inputProperty.Property.Name} has unsupported treatment " +

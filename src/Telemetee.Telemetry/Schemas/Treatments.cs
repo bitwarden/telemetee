@@ -6,9 +6,9 @@ namespace Bit.Telemetee.Telemetry.Schemas;
 /// Pre-written converters that <see cref="SchemaBuilder"/> composes into the per-schema process
 /// delegate at startup, one call per field. Each helper reads one JSON property as the declared
 /// input type, applies the field treatment, and returns the output type. A missing or wrong-typed
-/// field, a bucketer that returns null, an Authed field that does not match its claim — anything
-/// that would prevent the record from being emitted — throws <see cref="DropException"/>, which
-/// the applier catches and reports as the appropriate <see cref="DropReason"/>.
+/// field or a bucketer that returns null — anything that would prevent the record from being
+/// emitted — throws <see cref="DropException"/>, which the applier catches and reports as the
+/// appropriate <see cref="DropReason"/>.
 ///
 /// The exception-based signaling keeps the compiled process body a single
 /// <c>new Sink { ... }</c> member-init expression. Nothing in the body has to short-circuit the
@@ -82,26 +82,6 @@ internal static class Treatments
     {
         var raw = KeepString(root, name);
         return context.Salt.Pseudonymize(raw);
-    }
-
-    /// <summary>
-    /// Reads <paramref name="name"/> as a string, verifies it equals the enclosing authed group's
-    /// JWT claim <paramref name="jwtClaim"/>, and returns the HMAC pseudonym of the value. Throws
-    /// <see cref="DropReason.MissingAuthClaim"/> if the token carried no value for the claim and
-    /// <see cref="DropReason.ClaimMismatch"/> if the asserted value differs from the claim.
-    /// </summary>
-    public static string Authed(JsonElement root, string name, string jwtClaim, TreatmentContext context)
-    {
-        var provided = KeepString(root, name);
-        if (context.Claims is null || !context.Claims.TryGetValue(jwtClaim, out var expected))
-        {
-            throw new DropException(DropReason.MissingAuthClaim);
-        }
-        if (!string.Equals(provided, expected, StringComparison.Ordinal))
-        {
-            throw new DropException(DropReason.ClaimMismatch);
-        }
-        return context.Salt.Pseudonymize(provided);
     }
 
     public static string Bucket(JsonElement root, string name, IBucketer<double> bucketer)

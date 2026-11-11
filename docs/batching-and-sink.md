@@ -65,15 +65,10 @@ Metrics are on the `Bitwarden.Telemetee` meter. Every measurement carries a
 - `telemetee.pages` by outcome: `accepted`, `rejected_size`, `rejected_version`,
   `rejected_noise`, `malformed`.
 - `telemetee.batch.records_accepted` and `telemetee.batch.records_dropped` by reason:
-  `wrong_auth_scope`, `missing_auth_claim`, `claim_mismatch`, `auth_malformed`, plus the
-  pre-existing reasons.
+  `malformed_json`, `malformed_record`, `unknown_schema`, `oversize`, `buffer_full`.
 - `telemetee.batch.flushes` by outcome: `sent`, `partial`, `failed`, `empty`.
   `telemetee.batch.records_per_flush` is a histogram. `telemetee.batch.sink_failures` counts
   one unit per lost record, not per failed flush.
-- `telemetee.auth.groups` by outcome. The current implementation only emits `unverified`:
-  tokens are parsed to extract claims but are not signature-verified. Phase B replaces this
-  with concrete verify/reject outcomes once the JWKS fetch and `sig`/`exp`/`iss`/`aud`
-  checks land.
 - `telemetee.attestation.refreshes` by outcome.
 
 See [decisions.md](decisions.md#why-metrics-not-logs) for why observability goes through

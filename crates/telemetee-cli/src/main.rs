@@ -4,9 +4,7 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use telemetee_client::{
-    CollectorClient, attestation::AttestationPolicy, models::TelemetryRecord, page::Submission,
-};
+use telemetee_client::{CollectorClient, attestation::AttestationPolicy, models::TelemetryRecord};
 use url::Url;
 
 #[derive(Parser)]
@@ -44,10 +42,6 @@ enum Command {
         /// JSON record. Repeat for multiple records in the same send.
         #[arg(long = "record", required = true)]
         records: Vec<String>,
-        /// Optional JWT. When set, every --record is submitted as an authed record under this
-        /// token. When unset, every --record is submitted anonymously.
-        #[arg(long)]
-        auth: Option<String>,
     },
 }
 
@@ -74,7 +68,7 @@ async fn main() -> ExitCode {
             }
             Err(error) => fail(error),
         },
-        Command::Send { records, auth } => match send(&client, records, auth).await {
+        Command::Send { records } => match send(&client, records).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => fail(error),
         },
@@ -84,33 +78,22 @@ async fn main() -> ExitCode {
 async fn send(
     client: &CollectorClient,
     records: Vec<String>,
-    auth: Option<String>,
 ) -> Result<(), telemetee_client::Error> {
     // JSON on the command line is deserialized straight into the generated TelemetryRecord enum.
     // Unknown schema values or missing required fields fail here, before any crypto work.
-    let mut submissions = Vec::with_capacity(records.len());
+    let mut queue = Vec::with_capacity(records.len());
     for raw in records {
-        let event = serde_json::from_str::<TelemetryRecord>(&raw)?;
-        submissions.push(match &auth {
-            Some(token) => Submission::Authed {
-                token: token.clone(),
-                event,
-            },
-            None => Submission::Unauthed(event),
-        });
+        queue.push(serde_json::from_str::<TelemetryRecord>(&raw)?);
     }
-    let outcome = client.send(&mut submissions).await?;
+    let outcome = client.send(&mut queue).await?;
     eprintln!(
         "sent {} record(s) in {} page(s); {} dropped as oversize",
         outcome.records_sent,
         outcome.pages_sent,
         outcome.oversize_dropped.len()
     );
-    if !submissions.is_empty() {
-        eprintln!(
-            "{} record(s) remain in the queue after send",
-            submissions.len()
-        );
+    if !queue.is_empty() {
+        eprintln!("{} record(s) remain in the queue after send", queue.len());
     }
     Ok(())
 }

@@ -81,18 +81,14 @@ internal sealed class TelemetryHandler
         {
             var reader = new CborReader(body, CborConformanceMode.Lax);
             reader.ReadStartMap();
-            List<string>? auths = null;
             bool eventsRead = false;
             while (reader.PeekState() != CborReaderState.EndMap)
             {
                 var key = reader.ReadTextString();
                 switch (key)
                 {
-                    case "auths":
-                        auths = ReadAuths(reader);
-                        break;
                     case "events":
-                        ReadEvents(reader, auths ?? []);
+                        ReadEvents(reader);
                         eventsRead = true;
                         break;
                     default:
@@ -119,75 +115,13 @@ internal sealed class TelemetryHandler
         }
     }
 
-    private static List<string> ReadAuths(CborReader reader)
+    private void ReadEvents(CborReader reader)
     {
-        var auths = new List<string>();
         reader.ReadStartArray();
         while (reader.PeekState() != CborReaderState.EndArray)
         {
-            auths.Add(reader.ReadTextString());
-        }
-        reader.ReadEndArray();
-        return auths;
-    }
-
-    private void ReadEvents(CborReader reader, IReadOnlyList<string> auths)
-    {
-        // Each event is a definite-length array: [auth_idx, record_cbor] for authed,
-        // [record_cbor] for unauthed. Authed events have been pre-parsed into claims per unique
-        // token so parsing the same JWT four times across one page costs nothing extra.
-        var claimsByIndex = new Dictionary<int, IReadOnlyDictionary<string, string>?>();
-
-        reader.ReadStartArray();
-        while (reader.PeekState() != CborReaderState.EndArray)
-        {
-            var slotLength = reader.ReadStartArray();
-            if (slotLength == 1)
-            {
-                var json = ReadEventAsJson(reader);
-                Record(_applier.ApplyUnauthed(json));
-            }
-            else if (slotLength == 2)
-            {
-                var idx = (int)reader.ReadInt64();
-                var json = ReadEventAsJson(reader);
-                if (idx < 0 || idx >= auths.Count)
-                {
-                    _metrics.RecordDropped(ReasonTag(DropReason.MalformedRecord));
-                }
-                else
-                {
-                    if (!claimsByIndex.TryGetValue(idx, out var claims))
-                    {
-                        // parse claims once
-                        claims = JwtClaims.TryParse(auths[idx]);
-                        claimsByIndex[idx] = claims;
-                        if (claims is not null)
-                        {
-                            _metrics.AuthGroupUnverified();
-                        }
-                    }
-                    if (claims is null)
-                    {
-                        _metrics.RecordDropped(ReasonTag(DropReason.AuthMalformed));
-                    }
-                    else
-                    {
-                        Record(_applier.ApplyAuthed(json, claims));
-                    }
-                }
-            }
-            else
-            {
-                // Any other arity is a structural mismatch; skip the slot and count it as a
-                // malformed record rather than aborting the whole page.
-                for (var i = 0; i < slotLength; i++)
-                {
-                    reader.SkipValue();
-                }
-                _metrics.RecordDropped(ReasonTag(DropReason.MalformedRecord));
-            }
-            reader.ReadEndArray();
+            var json = ReadEventAsJson(reader);
+            Record(_applier.Apply(json));
         }
         reader.ReadEndArray();
     }
@@ -286,10 +220,6 @@ internal sealed class TelemetryHandler
         DropReason.UnknownSchema => "unknown_schema",
         DropReason.OversizeRecord => "oversize",
         DropReason.BufferFull => "buffer_full",
-        DropReason.WrongAuthScope => "wrong_auth_scope",
-        DropReason.MissingAuthClaim => "missing_auth_claim",
-        DropReason.ClaimMismatch => "claim_mismatch",
-        DropReason.AuthMalformed => "auth_malformed",
         _ => "unknown",
     };
 }

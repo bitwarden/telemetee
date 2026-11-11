@@ -27,18 +27,17 @@ served in Development, and the dev-only `/dev/telemetry` endpoint is what anchor
 ## Using `telemetee-client`
 
 `telemetee-client` re-exports the generated models as `telemetee_client::models`. The sole
-public sender, [`CollectorClient::send`], is bound to the generated `TelemetryRecord` enum.
-The compiler rejects any other type, so there is no path to put an unknown schema or raw bytes
-on the wire from the public API. The raw page/byte path is crate-internal.
+public sender, [`CollectorClient::send`], takes a `Vec<TelemetryRecord>` bound to the
+generated enum. The compiler rejects any other type, so there is no path to put an unknown
+schema or raw bytes on the wire from the public API. The raw page/byte path is crate-internal.
 
 ```rust
 use telemetee_client::{CollectorClient, attestation::AttestationPolicy};
-use telemetee_client::models::{AuthedGeneratedPassword, GeneratedPassword, TelemetryRecord};
-use telemetee_client::page::Submission;
+use telemetee_client::models::{GeneratedPassword, TelemetryRecord};
 
 let client = CollectorClient::new(base, "0.1.0", policy)?;
 let mut queue = vec![
-    Submission::Unauthed(TelemetryRecord::GeneratedPassword(Box::new(GeneratedPassword {
+    TelemetryRecord::GeneratedPassword(Box::new(GeneratedPassword {
         schema: None,
         kind: "password".into(),
         length: 14,
@@ -48,22 +47,7 @@ let mut queue = vec![
         has_digits: true,
         has_special: false,
         accepted: true,
-    }))),
-    Submission::Authed {
-        token: jwt_for_logged_in_user.clone(),
-        event: TelemetryRecord::AuthedGeneratedPassword(Box::new(AuthedGeneratedPassword {
-            schema: None,
-            user_id: user_id.clone(),         // collector rejects if this != the JWT's sub claim
-            kind: "passphrase".into(),
-            length: 24,
-            word_count: 4,
-            has_lowercase: true,
-            has_uppercase: false,
-            has_digits: false,
-            has_special: false,
-            accepted: true,
-        })),
-    },
+    })),
 ];
 let outcome = client.send(&mut queue).await?;
 // `queue` is empty on success; `outcome.oversize_dropped` carries any records the client
@@ -75,4 +59,4 @@ let outcome = client.send(&mut queue).await?;
 
 The CLI accepts flat JSON on the command line. `serde_json::from_str::<TelemetryRecord>`
 fails early on an unknown `schema` discriminator or a missing required field, so bad input
-never reaches the wire. Pass `--auth <jwt>` to submit records as an authed group.
+never reaches the wire.

@@ -20,25 +20,13 @@ public abstract class TreatmentAttribute : Attribute
 public sealed class KeepAttribute : TreatmentAttribute;
 
 /// <summary>
-/// Field is replaced by its HMAC-SHA256 under the process-lifetime salt, hex-encoded. The value
-/// comes from the record body: use this when a client-supplied identifier needs within-boot
-/// correlation. For values that must come from a verified JWT instead, use
-/// <see cref="AuthedAttribute"/>.
+/// Field is replaced by its HMAC-SHA256 under the pseudonym salt, hex-encoded. The designated home
+/// for this treatment is a client-generated <c>flow_id</c>: pseudonymizing it makes the correlation
+/// token one-way at the collector while within-flow correlation remains intact. Applied to any
+/// other kind of identifier it would re-enable the exact cross-event joins the collector exists to
+/// prevent, so reach for it only on <c>flow_id</c> unless a schema review has blessed another use.
 /// </summary>
 public sealed class PseudonymizeAttribute : TreatmentAttribute;
-
-/// <summary>
-/// Field is verified against the named JWT claim on the enclosing authed group and then
-/// pseudonymized the same way <see cref="PseudonymizeAttribute"/> would be. The client must send
-/// the field; a value that does not equal the claim is rejected, as is a record that omits it.
-/// Declaring any <see cref="AuthedAttribute"/> on a schema makes the schema an "authed schema":
-/// its records are only accepted inside an authed group on the page.
-/// </summary>
-/// <param name="jwtClaim">The JWT claim name this field is checked against (for example, <c>sub</c>).</param>
-public sealed class AuthedAttribute(string jwtClaim) : TreatmentAttribute
-{
-    public string JwtClaim { get; } = jwtClaim;
-}
 
 /// <summary>
 /// Field is classified by an <see cref="IBucketer{TIn, TOut}"/>. The bucketer lives in a <c>public

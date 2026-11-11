@@ -17,7 +17,7 @@ sequenceDiagram
     C->>C: pack records into CBOR page, Noise-encrypt
     C->>K: POST /telemetry  (NK msg 1 + Telemetee-Target-Version)
     K-->>C: NK msg 2 (constant 81 bytes, empty payload)
-    Note over K: parse CBOR, verify JWTs,<br/>apply schema per record, buffer
+    Note over K: parse CBOR, apply schema per record, buffer
     K->>B: every FlushInterval, drain in arrival order, group by schema,<br/>write {schema}/{guid}.parquet
 ```
 
@@ -50,18 +50,13 @@ single map:
 
 ```cbor
 {
-  "auths":  [<jwt>, ...],                        // deduped, insertion-ordered table
-  "events": [
-    [<auth_idx>, <event>],                       // authed: 2-element array; index into "auths"
-    [<event>],                                   // unauthed: 1-element array
-    ...
-  ]
+  "events": [<record>, ...]
 }
 ```
 
-Each event is a CBOR map with a `schema` discriminator and the schema's fields. The `events`
-array is in strict submission order. If two authed records use the same token, they share one
-entry in `auths`. The ~700-byte JWT appears once per user per page, not once per record.
+Each `<record>` is a CBOR map with a `schema` discriminator and the schema's fields. The
+`events` array is in strict submission order. Keeping the body a map leaves room to add new
+entries later without a wire-format version bump.
 
 The maximum record length is 1024 bytes. The collector drops a record over the cap, counts it,
 and continues through the rest. The client drops oversized records before any crypto work and
@@ -91,11 +86,10 @@ Production:
 
 Development only (not registered in Production):
 
-| Method | Path                     | Purpose                                                                                        |
-| ------ | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| GET    | `/openapi/v1.json`       | OpenAPI document; the client-binding generator reads it                                        |
-| GET    | `/dev/attestation/certs` | JWKS for the development issuer                                                                |
-| POST   | `/dev/telemetry`         | Plaintext unauthed `TelemetryRecord` in, anonymized output back                                |
-| POST   | `/dev/telemetry/authed`  | Same, plus `Authorization: Bearer <jwt>`; claims are parsed and `[Authed]` fields are verified |
+| Method | Path                     | Purpose                                                            |
+| ------ | ------------------------ | ------------------------------------------------------------------ |
+| GET    | `/openapi/v1.json`       | OpenAPI document; the client-binding generator reads it            |
+| GET    | `/dev/attestation/certs` | JWKS for the development issuer                                    |
+| POST   | `/dev/telemetry`         | Plaintext `TelemetryRecord` in, anonymized output back             |
 
 Plus `/version` and `/healthz`.

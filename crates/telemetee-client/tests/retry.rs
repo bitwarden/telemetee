@@ -8,9 +8,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::{Value, json};
 use telemetee_api::models::{FillAssistRuleOutcome, TelemetryRecord};
 use telemetee_client::{
-    CollectorClient, Error,
-    attestation::AttestationPolicy,
-    page::{RESPONSE_LENGTH, Submission},
+    CollectorClient, Error, attestation::AttestationPolicy, page::RESPONSE_LENGTH,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -26,7 +24,7 @@ async fn send_retries_once_when_key_rotates_between_attestation_and_post() {
     let (client, state) = start_client_against_mock().await;
     state.lock().rotate_after_next_attestation = true;
 
-    let mut queue = vec![Submission::Unauthed(fill_record())];
+    let mut queue = vec![fill_record()];
     let outcome = client
         .send(&mut queue)
         .await
@@ -43,7 +41,7 @@ async fn send_retries_once_when_key_rotates_between_attestation_and_post() {
 async fn send_does_not_re_attest_when_first_post_succeeds() {
     let (client, state) = start_client_against_mock().await;
 
-    let mut queue = vec![Submission::Unauthed(fill_record())];
+    let mut queue = vec![fill_record()];
     let outcome = client.send(&mut queue).await.expect("send succeeds");
 
     assert_eq!(outcome.records_sent, 1);
@@ -60,8 +58,7 @@ async fn send_retries_each_page_independently_across_multiple_rotations() {
     let (client, state) = start_client_against_mock().await;
     state.lock().rotate_before_odd_telemetry_calls = true;
 
-    let mut queue: Vec<Submission> =
-        (0..200).map(|_| Submission::Unauthed(fill_record())).collect();
+    let mut queue: Vec<TelemetryRecord> = (0..200).map(|_| fill_record()).collect();
     let outcome = client
         .send(&mut queue)
         .await
@@ -84,7 +81,7 @@ async fn send_fails_when_retry_also_fails() {
     // the time its POST reaches the server.
     state.lock().rotate_on_every_attestation = true;
 
-    let mut queue = vec![Submission::Unauthed(fill_record())];
+    let mut queue = vec![fill_record()];
     let error = client
         .send(&mut queue)
         .await

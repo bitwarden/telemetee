@@ -14,8 +14,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "schema")]
 pub enum TelemetryRecord {
-    #[serde(rename = "authed_generated_password")]
-    AuthedGeneratedPassword(Box<models::AuthedGeneratedPassword>),
     #[serde(rename = "fill_assist_rule_outcome")]
     FillAssistRuleOutcome(Box<models::FillAssistRuleOutcome>),
     #[serde(rename = "generated_password")]
@@ -24,6 +22,6 @@ pub enum TelemetryRecord {
 
 impl Default for TelemetryRecord {
     fn default() -> Self {
-        Self::AuthedGeneratedPassword(Default::default())
+        Self::FillAssistRuleOutcome(Default::default())
     }
 }

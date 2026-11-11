@@ -1,11 +1,12 @@
 use serde::Deserialize;
+use telemetee_api::models::TelemetryRecord;
 use url::Url;
 
 use crate::{
     Error,
     attestation::{AttestationPolicy, Jwks, VerifiedAttestation, verify},
     noise::NkInitiator,
-    page::{PAGE_LENGTH, PLAINTEXT_LENGTH, RESPONSE_LENGTH, Submission, pack_page},
+    page::{PAGE_LENGTH, PLAINTEXT_LENGTH, RESPONSE_LENGTH, pack_page},
 };
 
 const TARGET_VERSION_HEADER: &str = "Telemetee-Target-Version";
@@ -18,7 +19,7 @@ const TARGET_VERSION_HEADER: &str = "Telemetee-Target-Version";
 pub struct SendOutcome {
     pub records_sent: usize,
     pub pages_sent: usize,
-    pub oversize_dropped: Vec<Submission>,
+    pub oversize_dropped: Vec<TelemetryRecord>,
 }
 
 /// HTTP client for one collector version.
@@ -64,9 +65,9 @@ impl CollectorClient {
         verify(&token, &jwks, &self.policy)
     }
 
-    /// Ships `queue` to the collector in submission order. The client packs records into one or
-    /// more fixed-size pages, encrypts each under the collector's attested Noise static key, and
-    /// POSTs them. Attestation runs once per call. An empty queue is a no-op.
+    /// Ships `queue` to the collector in order. The client packs records into one or more
+    /// fixed-size pages, encrypts each under the collector's attested Noise static key, and POSTs
+    /// them. Attestation runs once per call. An empty queue is a no-op.
     ///
     /// The collector rotates its Noise static key on a time cadence, so a page's attested key can
     /// become stale between attestation and POST. The handshake fails on the stale key; this
@@ -84,7 +85,7 @@ impl CollectorClient {
     ///   and are safe to retry on the next shipment without producing duplicates on the wire.
     /// - `Err(_)` otherwise — nothing reached the wire. `queue` holds every record it did on
     ///   entry.
-    pub async fn send(&self, queue: &mut Vec<Submission>) -> Result<SendOutcome, Error> {
+    pub async fn send(&self, queue: &mut Vec<TelemetryRecord>) -> Result<SendOutcome, Error> {
         if queue.is_empty() {
             return Ok(SendOutcome {
                 records_sent: 0,
@@ -95,8 +96,8 @@ impl CollectorClient {
 
         let mut attestation = self.attestation().await?;
 
-        let mut oversize_dropped: Vec<Submission> = Vec::new();
-        let mut packed: Vec<([u8; PLAINTEXT_LENGTH], Vec<Submission>)> = Vec::new();
+        let mut oversize_dropped: Vec<TelemetryRecord> = Vec::new();
+        let mut packed: Vec<([u8; PLAINTEXT_LENGTH], Vec<TelemetryRecord>)> = Vec::new();
         loop {
             match pack_page(queue, &mut oversize_dropped) {
                 Ok(Some(entry)) => packed.push(entry),
@@ -205,7 +206,7 @@ impl CollectorClient {
     }
 }
 
-fn restore_to_front(queue: &mut Vec<Submission>, prefix: Vec<Submission>) {
+fn restore_to_front(queue: &mut Vec<TelemetryRecord>, prefix: Vec<TelemetryRecord>) {
     let suffix = std::mem::take(queue);
     *queue = prefix;
     queue.extend(suffix);

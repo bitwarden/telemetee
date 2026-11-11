@@ -22,27 +22,7 @@ internal sealed class SchemaApplier
         _saltFactory = saltFactory;
     }
 
-    /// <summary>
-    /// Processes a record that arrived inside an authed group. The matched schema must be authed;
-    /// an unauthed schema sent in this scope is dropped as <see cref="DropReason.WrongAuthScope"/>.
-    /// </summary>
-    public SchemaApplyResult ApplyAuthed(
-        ReadOnlySpan<byte> json,
-        IReadOnlyDictionary<string, string> jwtClaims) =>
-        ApplyCore(json, jwtClaims, authedScope: true);
-
-    /// <summary>
-    /// Processes a record that arrived outside any authed group. The matched schema must be
-    /// unauthed; an authed schema sent in this scope is dropped as
-    /// <see cref="DropReason.WrongAuthScope"/>.
-    /// </summary>
-    public SchemaApplyResult ApplyUnauthed(ReadOnlySpan<byte> json) =>
-        ApplyCore(json, jwtClaims: null, authedScope: false);
-
-    private SchemaApplyResult ApplyCore(
-        ReadOnlySpan<byte> json,
-        IReadOnlyDictionary<string, string>? jwtClaims,
-        bool authedScope)
+    public SchemaApplyResult Apply(ReadOnlySpan<byte> json)
     {
         JsonDocument document;
         try
@@ -69,15 +49,7 @@ internal sealed class SchemaApplier
                 return SchemaApplyResult.Failed(DropReason.UnknownSchema);
             }
 
-            // An authed schema may only arrive via ApplyAuthed; an unauthed schema only via
-            // ApplyUnauthed. The entry-point split guarantees the caller's intent, this check
-            // guarantees the record's declared schema agrees with it.
-            if (descriptor.IsAuthed != authedScope)
-            {
-                return SchemaApplyResult.Failed(DropReason.WrongAuthScope);
-            }
-
-            var context = new TreatmentContext(_saltFactory.Current, jwtClaims);
+            var context = new TreatmentContext(_saltFactory.Current);
             try
             {
                 var record = descriptor.Process(root, context);
